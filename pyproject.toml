@@ -84,9 +84,8 @@ Repository = "https://github.com/cracrazjf/PsychAI.git"
 psychai-train = "psychai.scripts.train:main"
 psychai-evaluate = "psychai.scripts.evaluate:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-exclude = ["tests*", "docs*", "examples*"]
+[tool.setuptools]
+packages = ["psychai"]
 
 #[tool.setuptools.package-data]
 #"psychai" = []
