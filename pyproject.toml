@@ -81,10 +81,11 @@ Repository = "https://github.com/cracrazjf/PsychAI.git"
 "Bug Tracker" = "https://github.com/cracrazjf/PsychAI/issues"
 
 [project.scripts]
-psychai-train = "PsychAI.scripts.train:main"
-psychai-evaluate = "PsychAI.scripts.evaluate:main"
+psychai-train = "psychai.scripts.train:main"
+psychai-evaluate = "psychai.scripts.evaluate:main"
 
 [tool.setuptools.packages.find]
+where = ["."]
 exclude = ["tests*", "docs*", "examples*"]
 
 #[tool.setuptools.package-data]

@@ -7,14 +7,10 @@ Framework for training and evaluating language models/optional audio/vision util
 - Stable:
   - `pip install psychai`
 - From source:
-  - `pip install git+https://github.com/cracrazjf/PsychAI.git`
+  - `pip install "psychai @ git+https://github.com/cracrazjf/PsychAI.git"`
 
 Optional extras:
-- Audio: `pip install psychai[audio]`
-- Vision: `pip install psychai[vision]`
-- Unsloth (LoRA-optimized training): `pip install psychai[unsloth]`
-
-Note on PyTorch: install the CUDA/CPU wheel appropriate for your system from `https://pytorch.org` before installing extras that depend on it.
+  - `pip install "psychai[audio,vision,unsloth] @ git+https://github.com/cracrazjf/PsychAI.git"`
 
 ### Quickstart (Python API)
 
