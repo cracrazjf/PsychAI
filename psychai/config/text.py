@@ -11,7 +11,7 @@ from typing import List
 
 class TextTrainingConfig:
     # Paths
-    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", "./autodl-tmp")
+    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", "/root/autodl-tmp")
     OUTPUT_DIR = os.getenv("OUTPUT_DIR", os.path.join(DATA_DISK_PATH, "outputs"))
     LOGS_DIR = os.getenv("LOGS_DIR", os.path.join(DATA_DISK_PATH, "logs/training"))
     MODELS_PATH = os.getenv("MODELS_PATH", os.path.join(DATA_DISK_PATH, "models"))

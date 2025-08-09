@@ -340,8 +340,8 @@ def list_available_datasets(data_root: str) -> Dict[str, Dict[str, Optional[str]
             processed = item / "processed"
             test_json: Optional[str] = None
             if processed.exists():
-                # pick first test_*.json
-                for j in processed.glob("test_*.json"):
+                # pick first test*.json
+                for j in processed.glob("test*.json"):
                     test_json = str(j)
                     break
             out[item.name] = {"processed_test": test_json}
