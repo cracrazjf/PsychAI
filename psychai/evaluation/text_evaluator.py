@@ -41,7 +41,7 @@ class ModelManager:
         self.model_type: Optional[str] = None
         self.verbose = verbose
 
-    def load(self, model_ref: str, model_type: str = "local", max_seq_length: int = 512,
+    def load(self, model_name: str, model_ref: str, model_type: str = "local", max_seq_length: int = 512,
              load_in_4bit: bool = False) -> Tuple[Any, Any]:
         """Load a model by reference.
 
@@ -50,13 +50,15 @@ class ModelManager:
 
         self.free_memory()
 
+        self.model_name = model_name
         self.model_ref = model_ref
         self.model_type = model_type
 
         # Prefer Unsloth if available
         try:
             model, tokenizer = load_model_unsloth(
-                model_name=model_ref,
+                model_name=model_name,
+                model_path=model_ref,
                 max_seq_length=max_seq_length,
                 load_in_4bit=load_in_4bit,
                 for_training=False,
@@ -64,7 +66,7 @@ class ModelManager:
         except Exception:
             if self.verbose:
                 print("⚠️ Unsloth not available or failed. Falling back to standard loading.")
-            model, tokenizer = load_model(model_name=model_ref, for_training=False)
+            model, tokenizer = load_model(model_name=model_name, model_path=model_ref, for_training=False)
 
         self.model = model
         self.tokenizer = tokenizer
@@ -168,6 +170,8 @@ class TextEvaluator:
                 print("✅ Current tokenizer deleted")
             except Exception:
                 pass
+        gc.collect()
+        torch.cuda.empty_cache()
         self.model = None
         self.tokenizer = None
         print("✅ Cache cleared")
@@ -385,6 +389,8 @@ def benchmark_text(
     dataset_names: Union[List[str], str],
     models_root: str,
     data_root: str,
+    mm: Optional[ModelManager] = None,
+    evaluator: Optional[TextEvaluator] = None,
     labels_map: Optional[Dict[str, List[str]]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -404,14 +410,17 @@ def benchmark_text(
         dataset_list = dataset_names if isinstance(dataset_names, list) else [dataset_names]
 
     results: Dict[str, Dict[str, Optional[float]]] = {}
-    mm = ModelManager()
-    evaluator = TextEvaluator(verbose=False)
+
+    if mm is None:
+        mm = ModelManager()
+    if evaluator is None:
+        evaluator = TextEvaluator(verbose=False)
 
     for model_name in model_list:
         model_path = models_dict.get(model_name, model_name)  # allow HF ref
         # Decide type: local if exists, else huggingface
         model_type = "local" if Path(model_path).exists() else "huggingface"
-        mm.load(model_path, model_type=model_type)
+        mm.load(model_name, model_path, model_type=model_type)
         evaluator.set_model(mm.model, mm.tokenizer)
 
         results[model_name] = {}
@@ -445,6 +454,8 @@ def compare_text(
     dataset_name: str,
     models_root: str,
     data_root: str,
+    mm: Optional[ModelManager] = None,
+    evaluator: Optional[TextEvaluator] = None,
     labels: Optional[List[str]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -453,14 +464,16 @@ def compare_text(
     models_dict = list_available_models(models_root)
     test_data = load_test_data(dataset_name, data_root)
 
-    mm = ModelManager()
-    evaluator = TextEvaluator(verbose=False)
+    if mm is None:
+        mm = ModelManager()
+    if evaluator is None:
+        evaluator = TextEvaluator(verbose=False)
 
     results: Dict[str, Optional[float]] = {}
     for model_name in model_names:
         model_path = models_dict.get(model_name, model_name)
         model_type = "local" if Path(model_path).exists() else "huggingface"
-        mm.load(model_path, model_type=model_type)
+        mm.load(model_name, model_path, model_type=model_type)
         evaluator.set_model(mm.model, mm.tokenizer)
         try:
             res = evaluator.evaluate_classification(test_data, labels=labels, max_samples=num_samples)
@@ -499,7 +512,7 @@ def interactive_text(models_root: str, data_root: str) -> None:
     current_model_name: Optional[str] = next(iter(models.keys()), None)
     if current_model_name:
         model_path = models[current_model_name]
-        mm.load(model_path, model_type="local")
+        mm.load(current_model_name, model_path, model_type="local")
         evaluator.set_model(mm.model, mm.tokenizer)
         print(f"✅ Loaded default model: {current_model_name}")
 
@@ -525,11 +538,11 @@ def interactive_text(models_root: str, data_root: str) -> None:
         if user.startswith("switch "):
             ref = user.split(" ", 1)[1].strip()
             ref_path = models.get(ref, ref)
-            mtype = "local" if Path(ref_path).exists() else "huggingface"
-            mm.load(ref_path, model_type=mtype)
-            evaluator.set_model(mm.model, mm.tokenizer)
             current_model_name = ref
-            print(f"🔄 Switched to: {ref}")
+            mtype = "local" if Path(ref_path).exists() else "huggingface"
+            mm.load(current_model_name, ref_path, model_type=mtype)
+            evaluator.set_model(mm.model, mm.tokenizer)
+            print(f"🔄 Switched to: {current_model_name}")
             continue
         if user == "chat":
             if evaluator.model is None:
@@ -554,13 +567,13 @@ def interactive_text(models_root: str, data_root: str) -> None:
             mdl_list = "all" if mdl == "all" else [m.strip() for m in mdl.split(",")]
             dss = input("Datasets (comma or 'all'): ").strip()
             dss_list = "all" if dss == "all" else [d.strip() for d in dss.split(",")]
-            benchmark_text(mdl_list, dss_list, models_root, data_root)
+            benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator)
             continue
         if user == "compare":
             mdl = input("Models (comma): ").strip()
             mdl_names = [m.strip() for m in mdl.split(",")]
             dset = input("Dataset: ").strip()
-            compare_text(mdl_names, dset, models_root, data_root)
+            compare_text(mdl_names, dset, models_root, data_root, mm, evaluator)
             continue
 
         print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
