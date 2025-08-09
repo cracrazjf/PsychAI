@@ -82,3 +82,17 @@ def get_memory_stats() -> Dict[str, float]:
     stats['ram_usage_percent'] = (stats['cpu_memory_gb'] / stats['total_ram_gb']) * 100
     
     return stats
+
+
+def clear_cache():
+    """Clear GPU and Python memory caches"""
+    print("🧹 Clearing memory caches...")
+    
+    # Clear GPU cache
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print("✅ GPU cache cleared")
+    
+    # Force garbage collection
+    gc.collect()
+    print("✅ Python garbage collection completed")
