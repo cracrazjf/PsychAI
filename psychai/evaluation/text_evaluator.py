@@ -568,7 +568,7 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 num_samples = int(num_samples)
             else:
                 num_samples = None
-            datasets_names = datasets.keys() if dss_list == 'all' else dss_list
+            datasets_names = list(datasets.keys()) if dss_list == 'all' else dss_list
             labels = input(f"Enter labels for each dataset {datasets_names} separated by commas e.g.[[label1,label2], [label1,label2]]: ").strip()
             if labels:
                 labels = ast.literal_eval(labels)
