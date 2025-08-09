@@ -36,7 +36,7 @@ def ensure_training_dirs(config: TextTrainingConfig) -> Dict[str, str]:
     return paths
 
 
-def ensure_cache_dirs(settings: SettingsConfig) -> Dict[str, str]:
+def ensure_cache_dirs(settings: SettingsConfig, set_env: bool = False) -> Dict[str, str]:
     """
     Ensure cache directories from SettingsConfig exist. Optionally set env vars.
     """
@@ -54,6 +54,10 @@ def ensure_cache_dirs(settings: SettingsConfig) -> Dict[str, str]:
         if ensured:
             abspath = os.path.abspath(ensured)
             paths[key] = abspath
+
+    if set_env:
+        for key, value in paths.items():
+            os.environ[key] = value
 
     return paths
 

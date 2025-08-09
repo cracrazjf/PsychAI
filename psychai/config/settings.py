@@ -37,6 +37,10 @@ class SettingsConfig:
     
     # Hugging Face token (must be provided via environment)
     HF_TOKEN = os.getenv("HF_TOKEN", None)
+
+    def __init__(self, **overrides):
+        for k, v in overrides.items():
+            setattr(self, k, v)
     
     @classmethod
     def setup_environment(cls):
