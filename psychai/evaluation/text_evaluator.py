@@ -168,8 +168,6 @@ class TextEvaluator:
                 print("✅ Current tokenizer deleted")
             except Exception:
                 pass
-        gc.collect()
-        torch.cuda.empty_cache()
         self.model = None
         self.tokenizer = None
         print("✅ Cache cleared")
