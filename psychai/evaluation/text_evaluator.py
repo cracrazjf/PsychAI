@@ -568,10 +568,11 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 num_samples = int(num_samples)
             else:
                 num_samples = None
-            labels = input(f"Enter labels for each dataset {dss_list} separated by commas e.g.[label1,label2], [label1,label2]: ").strip()
+            datasets_names = datasets.keys() if dss_list == 'all' else dss_list
+            labels = input(f"Enter labels for each dataset {datasets_names} separated by commas e.g.[[label1,label2], [label1,label2]]: ").strip()
             if labels:
                 labels = ast.literal_eval(labels)
-                labels_map = {dss_list[i]: labels[i] for i in range(len(dss_list))}
+                labels_map = {datasets_names[i]: labels[i] for i in range(len(datasets_names))}
                 print(labels_map)
             else:
                 labels_map = None
