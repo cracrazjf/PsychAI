@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import json
 import gc
+import tqdm
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -162,7 +163,7 @@ class TextEvaluator:
 
     def chat(self, mm: ModelManager, input_data: Union[str, List[Dict[str, str]]],
              max_new_tokens: int = 128, temperature: float = 0.7,
-             do_sample: bool = True) -> str:
+             do_sample: bool = True, top_p: float = 0.95, top_k: int = 50) -> str:
         self._ensure_model(mm)
         formatter = PromptFormatter(mm.tokenizer)
 
@@ -182,6 +183,8 @@ class TextEvaluator:
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 do_sample=do_sample,
+                top_p=top_p,
+                top_k=top_k,
                 pad_token_id=mm.tokenizer.eos_token_id,
                 eos_token_id=mm.tokenizer.eos_token_id,
             )
@@ -191,7 +194,8 @@ class TextEvaluator:
         new_tokens = outputs[0][input_len:]
         return mm.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
-    def evaluate_generation(self, mm: ModelManager, test_data: List[List[Dict[str, str]]], max_samples: Optional[int] = None) -> Dict[str, Any]:
+    def evaluate_generation(self, mm: ModelManager, test_data: List[List[Dict[str, str]]], max_samples: Optional[int] = None ,
+                            max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50) -> Dict[str, Any]:
         if not validate_format(test_data, "chat"):
             raise ValueError("test_data must be in chat format")
 
@@ -202,13 +206,13 @@ class TextEvaluator:
         truths: List[str] = []
         formatter = PromptFormatter(mm.tokenizer)
 
-        for conversation in test_data:
+        for conversation in tqdm.tqdm(test_data, desc="Evaluating generation"):
             user_messages = [m for m in conversation if m.get("role") != "assistant"]
             assistant_messages = [m for m in conversation if m.get("role") == "assistant"]
             if not user_messages or not assistant_messages:
                 continue
             prompt = formatter.from_chat(user_messages)
-            pred = self.chat(mm, prompt)
+            pred = self.chat(mm, prompt, max_new_tokens=max_new_tokens, temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k)
             predictions.append(pred)
             truths.append(assistant_messages[-1].get("content", ""))
 
@@ -238,8 +242,10 @@ class TextEvaluator:
         labels: Optional[List[str]] = None,
         label_extractor: Optional[Callable[[str, Optional[List[str]]], str]] = None,
         max_samples: Optional[int] = None,
+        max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     ) -> Dict[str, Any]:
-        base = self.evaluate_generation(mm, test_data, max_samples=max_samples)
+        base = self.evaluate_generation(mm, test_data, max_samples=max_samples, max_new_tokens=max_new_tokens,
+                                        temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k)
         preds = base.get("predictions", [])
         truths = base.get("ground_truths", [])
 
@@ -365,6 +371,7 @@ def benchmark_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
+    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     evaluator: Optional[TextEvaluator] = None,
     labels_map: Optional[Dict[str, List[str]]] = None,
     num_samples: Optional[int] = None,
@@ -402,7 +409,9 @@ def benchmark_text(
             try:
                 test_data = load_test_data(dataset_name, data_root)
                 labels = labels_map.get(dataset_name) if labels_map else None
-                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples)
+                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples, 
+                                                        max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                        do_sample=do_sample, top_p=top_p, top_k=top_k)
                 results[model_name][dataset_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
             except Exception as e:
                 results[model_name][dataset_name] = None
@@ -429,6 +438,7 @@ def compare_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
+    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     evaluator: Optional[TextEvaluator] = None,
     labels: Optional[List[str]] = None,
     num_samples: Optional[int] = None,
@@ -449,7 +459,9 @@ def compare_text(
         model_type = "local" if Path(model_path).exists() else "huggingface"
         mm.load(model_name, model_path, model_type=model_type)
         try:
-            res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples)
+            res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples,
+                                                    max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                    do_sample=do_sample, top_p=top_p, top_k=top_k)
             results[model_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
         except Exception as e:
             results[model_name] = None
@@ -521,6 +533,7 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 continue
             print(f"Chatting with {current_model_name}")
             print("Type 'exit' to leave chat.")
+            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             while True:
                 try:
                     msg = input("You: ").strip()
@@ -531,20 +544,39 @@ def interactive_text(models_root: str, data_root: str) -> None:
                     break
                 if not msg:
                     continue
-                print("Model:", evaluator.chat(mm, msg))
+                if gen_args:
+                    max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                    print("Model:", evaluator.chat(mm, msg, max_new_tokens=max_new_tokens, temperature=temperature, 
+                        do_sample=do_sample, top_p=top_p, top_k=top_k))
+                else:
+                    print("Model:", evaluator.chat(mm, msg))
             continue
         if user == "benchmark":
             mdl = input("Models (comma or 'all'): ").strip()
             mdl_list = "all" if mdl == "all" else [m.strip() for m in mdl.split(",")]
             dss = input("Datasets (comma or 'all'): ").strip()
             dss_list = "all" if dss == "all" else [d.strip() for d in dss.split(",")]
-            benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator)
+            num_samples = int(input("Num samples: ").strip()) if input("Max samples: ").strip() else None
+            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
+            if gen_args:
+                max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
+                               temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples)
+            else:
+                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, num_samples=num_samples)
             continue
         if user == "compare":
             mdl = input("Models (comma): ").strip()
             mdl_names = [m.strip() for m in mdl.split(",")]
             dset = input("Dataset: ").strip()
-            compare_text(mdl_names, dset, models_root, data_root, mm, evaluator)
+            num_samples = int(input("Num samples: ").strip()) if input("Max samples: ").strip() else None
+            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
+            if gen_args:
+                max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
+                             temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples)
+            else:
+                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, num_samples=num_samples)
             continue
 
         print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
