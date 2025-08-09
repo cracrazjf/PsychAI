@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import json
+import ast
 import gc
 import tqdm
 from pathlib import Path
@@ -567,13 +568,21 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 num_samples = int(num_samples)
             else:
                 num_samples = None
+            labels = input(f"Enter labels for each dataset {dss_list} separated by commas e.g.[label1,label2], [label1,label2]: ").strip()
+            if labels:
+                labels = ast.literal_eval(labels)
+                labels_map = {dss_list[i]: labels[i] for i in range(len(dss_list))}
+                print(labels_map)
+            else:
+                labels_map = None
+            
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
                 benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
-                               temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples)
+                               temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels_map=labels_map)
             else:
-                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, num_samples=num_samples)
+                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, num_samples=num_samples, labels_map=labels_map)
             continue
         if user == "compare":
             mdl = input("Models (comma): ").strip()
@@ -584,13 +593,19 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 num_samples = int(num_samples)
             else:
                 num_samples = None
+            labels = input(f"Enter labels for the dataset {dset} e.g.[label1,label2]: ").strip()
+            if labels:
+                labels = ast.literal_eval(labels)
+                print(labels)
+            else:
+                labels = None
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
                 compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
-                             temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples)
+                             temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels=labels)
             else:
-                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, num_samples=num_samples)
+                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, num_samples=num_samples, labels=labels)
             continue
 
         print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
