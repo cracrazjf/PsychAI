@@ -70,6 +70,7 @@ class ModelManager:
 
         self.model = model
         self.tokenizer = tokenizer
+        print(f"✅ Model loaded: {model_name} from {model_ref}")
         return model, tokenizer
 
     def free_memory(self) -> None:
@@ -152,72 +153,45 @@ class PromptFormatter:
 class TextEvaluator:
     """Simple text evaluator for generation and classification."""
 
-    def __init__(self, model: Any = None, tokenizer: Any = None, verbose: bool = True) -> None:
-        self.model = model
-        self.tokenizer = tokenizer
+    def __init__(self, verbose: bool = True) -> None:
         self.verbose = verbose
 
-    def free_memory(self) -> None:
-        if hasattr(self, 'model') and self.model is not None:
-            try:
-                del self.model
-                print("✅ Current model deleted")
-            except Exception:
-                pass
-        if hasattr(self, "tokenizer") and self.tokenizer is not None:
-            try:
-                del self.tokenizer
-                print("✅ Current tokenizer deleted")
-            except Exception:
-                pass
-        gc.collect()
-        torch.cuda.empty_cache()
-        self.model = None
-        self.tokenizer = None
-        print("✅ Cache cleared")
-
-    def set_model(self, model: Any, tokenizer: Any) -> None:
-        self.free_memory()
-        self.model = model
-        self.tokenizer = tokenizer
-
-    def _ensure_model(self) -> None:
-        if self.model is None or self.tokenizer is None:
+    def _ensure_model(self, mm: ModelManager) -> None:
+        if mm.model is None or mm.tokenizer is None:
             raise ValueError("Model and tokenizer must be set before evaluation.")
 
-    def chat(self, input_data: Union[str, List[Dict[str, str]]],
+    def chat(self, mm: ModelManager, input_data: Union[str, List[Dict[str, str]]],
              max_new_tokens: int = 128, temperature: float = 0.7,
              do_sample: bool = True) -> str:
-        self._ensure_model()
-        formatter = PromptFormatter(self.tokenizer)
+        self._ensure_model(mm)
+        formatter = PromptFormatter(mm.tokenizer)
 
         if isinstance(input_data, str):
             prompt = formatter.from_text(input_data)
         else:
             prompt = formatter.from_chat(input_data)
 
-        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
-        device = next(self.model.parameters()).device
+        inputs = mm.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
+        device = next(mm.model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            outputs = self.model.generate(
+            outputs = mm.model.generate(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs.get("attention_mask"),
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 do_sample=do_sample,
-                pad_token_id=self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                pad_token_id=mm.tokenizer.eos_token_id,
+                eos_token_id=mm.tokenizer.eos_token_id,
             )
 
         # Decode only the new tokens
         input_len = inputs["input_ids"].shape[1]
         new_tokens = outputs[0][input_len:]
-        return self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        return mm.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
-    def evaluate_generation(self, test_data: List[List[Dict[str, str]]], max_samples: Optional[int] = None) -> Dict[str, Any]:
-        self._ensure_model()
+    def evaluate_generation(self, mm: ModelManager, test_data: List[List[Dict[str, str]]], max_samples: Optional[int] = None) -> Dict[str, Any]:
         if not validate_format(test_data, "chat"):
             raise ValueError("test_data must be in chat format")
 
@@ -226,7 +200,7 @@ class TextEvaluator:
 
         predictions: List[str] = []
         truths: List[str] = []
-        formatter = PromptFormatter(self.tokenizer)
+        formatter = PromptFormatter(mm.tokenizer)
 
         for conversation in test_data:
             user_messages = [m for m in conversation if m.get("role") != "assistant"]
@@ -234,7 +208,7 @@ class TextEvaluator:
             if not user_messages or not assistant_messages:
                 continue
             prompt = formatter.from_chat(user_messages)
-            pred = self.chat(prompt)
+            pred = self.chat(mm, prompt)
             predictions.append(pred)
             truths.append(assistant_messages[-1].get("content", ""))
 
@@ -259,12 +233,13 @@ class TextEvaluator:
 
     def evaluate_classification(
         self,
+        mm: ModelManager,
         test_data: List[List[Dict[str, str]]],
         labels: Optional[List[str]] = None,
         label_extractor: Optional[Callable[[str, Optional[List[str]]], str]] = None,
         max_samples: Optional[int] = None,
     ) -> Dict[str, Any]:
-        base = self.evaluate_generation(test_data, max_samples=max_samples)
+        base = self.evaluate_generation(mm, test_data, max_samples=max_samples)
         preds = base.get("predictions", [])
         truths = base.get("ground_truths", [])
 
@@ -421,14 +396,13 @@ def benchmark_text(
         # Decide type: local if exists, else huggingface
         model_type = "local" if Path(model_path).exists() else "huggingface"
         mm.load(model_name, model_path, model_type=model_type)
-        evaluator.set_model(mm.model, mm.tokenizer)
 
         results[model_name] = {}
         for dataset_name in dataset_list:
             try:
                 test_data = load_test_data(dataset_name, data_root)
                 labels = labels_map.get(dataset_name) if labels_map else None
-                res = evaluator.evaluate_classification(test_data, labels=labels, max_samples=num_samples)
+                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples)
                 results[model_name][dataset_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
             except Exception as e:
                 results[model_name][dataset_name] = None
@@ -474,9 +448,8 @@ def compare_text(
         model_path = models_dict.get(model_name, model_name)
         model_type = "local" if Path(model_path).exists() else "huggingface"
         mm.load(model_name, model_path, model_type=model_type)
-        evaluator.set_model(mm.model, mm.tokenizer)
         try:
-            res = evaluator.evaluate_classification(test_data, labels=labels, max_samples=num_samples)
+            res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples)
             results[model_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
         except Exception as e:
             results[model_name] = None
@@ -513,7 +486,6 @@ def interactive_text(models_root: str, data_root: str) -> None:
     if current_model_name:
         model_path = models[current_model_name]
         mm.load(current_model_name, model_path, model_type="local")
-        evaluator.set_model(mm.model, mm.tokenizer)
         print(f"✅ Loaded default model: {current_model_name}")
 
     print("\n🎮 Interactive Text Evaluation")
@@ -541,11 +513,10 @@ def interactive_text(models_root: str, data_root: str) -> None:
             current_model_name = ref
             mtype = "local" if Path(ref_path).exists() else "huggingface"
             mm.load(current_model_name, ref_path, model_type=mtype)
-            evaluator.set_model(mm.model, mm.tokenizer)
             print(f"🔄 Switched to: {current_model_name}")
             continue
         if user == "chat":
-            if evaluator.model is None:
+            if mm.model is None:
                 print("⚠️ Load a model first (use 'switch').")
                 continue
             print(f"Chatting with {current_model_name}")
@@ -560,7 +531,7 @@ def interactive_text(models_root: str, data_root: str) -> None:
                     break
                 if not msg:
                     continue
-                print("Model:", evaluator.chat(msg))
+                print("Model:", evaluator.chat(mm, msg))
             continue
         if user == "benchmark":
             mdl = input("Models (comma or 'all'): ").strip()
