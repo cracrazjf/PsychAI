@@ -28,9 +28,6 @@ except Exception:  # pragma: no cover - allow usage without sklearn
     confusion_matrix = None
 
 from ..models import load_model, load_model_unsloth
-from ..config.settings import SettingsConfig
-SettingsConfig.setup_environment()
-SettingsConfig.login_huggingface()
 from ..data import validate_format
 
 

@@ -20,6 +20,10 @@ from ..data import load_json, validate_format
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train a language model with PsychAI")
+
+    # Data disk path
+    p.add_argument("--data-disk-path", default="/root/autodl-tmp", help="Path of your data disk")
+
     # Data
     p.add_argument("--data-name", default=None, help="Data name")
     p.add_argument("--train-data", required=True, help="Path to training data (JSON in chat or instruction format)")
@@ -65,6 +69,8 @@ def parse_args() -> argparse.Namespace:
 
 def build_config(args: argparse.Namespace) -> TextTrainingConfig:
     cfg_overrides: Dict[str, Any] = {}
+    if args.data_disk_path is not None:
+        cfg_overrides["DATA_DISK_PATH"] = args.data_disk_path
     if args.output_dir is not None:
         cfg_overrides["OUTPUT_DIR"] = args.output_dir
     if args.model_ref is not None:
@@ -75,6 +81,8 @@ def build_config(args: argparse.Namespace) -> TextTrainingConfig:
         cfg_overrides["MODEL_TYPE"] = args.model_type
     if args.data_name is not None:
         cfg_overrides["DATA_NAME"] = args.data_name
+    if args.model_ref is not None:
+        cfg_overrides["MODEL_PATH"] = args.model_ref
 
     # LoRA
     if args.lora_rank is not None:

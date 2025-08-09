@@ -143,13 +143,14 @@ def convert_to_chat_format(
 
 def convert_to_instruction_format(
     input_text: str, 
-    output_text: str
+    output_text: str,
+    instruction: Optional[str] = None
 ) -> Dict:
     """
     Convert input/output pair to instruction format
     """
     return {
-        "instruction": input_text,
+        "instruction": f"{input_text}\n{instruction}" if instruction else input_text,
         "output": output_text
     }
 
@@ -161,6 +162,7 @@ def load_csv_as_chat(
     system_prompt: Optional[str] = None,
     question: Optional[str] = None,
     constraint: Optional[str] = None,
+    output_wrapper: Optional[Callable[[str], str]] = None,
     stype: str = "natural",
     clean_function: Optional[Callable[[str], str]] = None,
     verbose: bool = True
@@ -205,9 +207,13 @@ def load_csv_as_chat(
                 input_text = s
             else:
                 raise ValueError(f"Invalid stype: {stype}")
+            if output_wrapper:
+                output_text = output_wrapper(row[output_column])
+            else:
+                output_text = row[output_column]
             conversation = convert_to_chat_format(
                 str(input_text),
-                str(row[output_column]),
+                str(output_text),
                 system_prompt
             )
             conversations.append(conversation)
@@ -221,6 +227,8 @@ def load_csv_as_instruction(
     filepath: str,
     input_column: str = "input",
     output_column: str = "output",
+    instruction: Optional[str] = None,
+    output_wrapper: Optional[Callable[[str], str]] = None,
     clean_function: Optional[Callable[[str], str]] = None,
     verbose: bool = True
 ) -> List[Dict]:
@@ -237,9 +245,14 @@ def load_csv_as_instruction(
     
     for _, row in df.iterrows():
         if pd.notna(row[input_column]) and pd.notna(row[output_column]):
+            if output_wrapper:
+                output_text = output_wrapper(row[output_column])
+            else:
+                output_text = row[output_column]
             conversation = convert_to_instruction_format(
                 str(row[input_column]),
-                str(row[output_column])
+                str(output_text),
+                instruction
             )
             conversations.append(conversation)
             

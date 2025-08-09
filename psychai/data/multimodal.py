@@ -5,7 +5,7 @@ Functions for combining text, image, and audio data in training samples.
 """
 
 from typing import List, Dict, Any, Optional
-from .core import convert_to_chat_format
+from .text import convert_to_chat_format
 from .image import create_image_chat_sample
 from .audio import create_audio_chat_sample
 

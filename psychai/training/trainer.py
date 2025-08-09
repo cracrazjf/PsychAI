@@ -27,9 +27,6 @@ from sklearn.metrics import accuracy_score
 from ..models import ModelLoader, load_model_unsloth
 from ..models.lora import apply_lora, apply_lora_unsloth
 from ..config import TextTrainingConfig
-from ..config.settings import SettingsConfig
-SettingsConfig.setup_environment()
-SettingsConfig.login_huggingface()
 
 from ..utils import print_memory_usage
 from ..data import train_test_split
@@ -58,6 +55,7 @@ class Trainer:
     def load_model_and_tokenizer(
         self, 
         model_name: Optional[str] = None,
+        model_path: Optional[str] = None,
         use_unsloth: bool = True,
         apply_lora: bool = True,
         for_training: bool = True
@@ -67,6 +65,7 @@ class Trainer:
         
         Args:
             model_name: Model name override (uses config if None)
+            model_path: Model path override (uses config if None)
             use_unsloth: Whether to use Unsloth optimization
             for_training: Whether model is for training
             
@@ -74,14 +73,15 @@ class Trainer:
             Tuple of (model, tokenizer)
         """
         model_name = model_name or self.config.MODEL_NAME
+        model_path = model_path or self.config.MODEL_PATH
         
-        print(f"🚀 Loading model: {model_name}")
+        print(f"🚀 Loading model: {model_name} from {model_path}")
         
         if use_unsloth and UNSLOTH_AVAILABLE:
             model, tokenizer = load_model_unsloth(
                 model_name=model_name,
+                model_path=model_path,
                 max_seq_length=self.config.MAX_LENGTH,
-                local_path=self.config.MODEL_PATH,
                 load_in_4bit=True,
                 for_training=for_training
             )

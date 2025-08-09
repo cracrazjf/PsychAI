@@ -15,7 +15,7 @@ class SettingsConfig:
     # =============================================================================
     
     # Base data path
-    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", "./data")
+    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", "/root/autodl-tmp")
 
     # Transformers cache directory
     TRANSFORMERS_CACHE = os.getenv("TRANSFORMERS_CACHE", os.path.join(DATA_DISK_PATH, "cache/huggingface/hub"))

@@ -1,33 +1,3 @@
-"""
-ML Training Framework - A generic framework for training and evaluating language models
-
-This package provides a comprehensive toolkit for:
-- Loading and managing various language models (HuggingFace, Unsloth, LoRA)
-- Training with modern techniques (SFT, LoRA fine-tuning)
-- Evaluation and benchmarking
-- Data processing and management
-
-Example Usage:
-    from ml_training.training import Trainer, TrainingConfig
-    from ml_training.models import ModelLoader
-    from ml_training.evaluation import Evaluator
-    
-    # Configure training
-    config = TrainingConfig(
-        model_name="meta-llama/Meta-Llama-3.1-8B-Instruct",
-        learning_rate=2e-4,
-        batch_size=4
-    )
-    
-    # Train model
-    trainer = Trainer(config)
-    model = trainer.train(training_data)
-    
-    # Evaluate model
-    evaluator = Evaluator()
-    results = evaluator.evaluate(model, test_data)
-"""
-
 __version__ = "0.1.0"
 __author__ = "Jingfeng(Craig) Zhang"
 __email__ = "jz44@illinois.edu"
