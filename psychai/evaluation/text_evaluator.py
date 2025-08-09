@@ -494,11 +494,17 @@ def interactive_text(models_root: str, data_root: str) -> None:
     evaluator = TextEvaluator()
 
     # Load first model if exists
-    current_model_name: Optional[str] = next(iter(models.keys()), None)
-    if current_model_name:
-        model_path = models[current_model_name]
-        mm.load(current_model_name, model_path, model_type="local")
-        print(f"✅ Loaded default model: {current_model_name}")
+    load_default = input("Load default model? (y/n)").strip()
+    if load_default == "y":
+        current_model_name: Optional[str] = next(iter(models.keys()), None)
+        if current_model_name:
+            model_path = models[current_model_name]
+            mm.load(current_model_name, model_path, model_type="local")
+            print(f"✅ Loaded default model: {current_model_name}")
+        else:
+            print("⚠️ No default model found.")
+    else:
+        print("You can always load a model later by using 'switch <model_name>'.")
 
     print("\n🎮 Interactive Text Evaluation")
     print("Commands: chat | switch <model_or_hf_ref> | models | datasets | benchmark | compare | quit")
@@ -556,7 +562,11 @@ def interactive_text(models_root: str, data_root: str) -> None:
             mdl_list = "all" if mdl == "all" else [m.strip() for m in mdl.split(",")]
             dss = input("Datasets (comma or 'all'): ").strip()
             dss_list = "all" if dss == "all" else [d.strip() for d in dss.split(",")]
-            num_samples = int(input("Num samples: ").strip()) if input("Max samples: ").strip() else None
+            num_samples = input("Num samples: ").strip()
+            if num_samples:
+                num_samples = int(num_samples)
+            else:
+                num_samples = None
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
@@ -569,7 +579,11 @@ def interactive_text(models_root: str, data_root: str) -> None:
             mdl = input("Models (comma): ").strip()
             mdl_names = [m.strip() for m in mdl.split(",")]
             dset = input("Dataset: ").strip()
-            num_samples = int(input("Num samples: ").strip()) if input("Max samples: ").strip() else None
+            num_samples = input("Num samples: ").strip()
+            if num_samples:
+                num_samples = int(num_samples)
+            else:
+                num_samples = None
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
