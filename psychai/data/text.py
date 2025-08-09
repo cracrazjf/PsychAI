@@ -202,7 +202,7 @@ def load_csv_as_chat(
                 input_text = "\n".join(parts)
             elif stype == "natural":
                 s = row[input_column].strip()
-                if question: s += f"\n{question}"
+                if question: s += f"\n\n{question}"
                 if constraint: s += f"\n{constraint}"
                 input_text = s
             else:

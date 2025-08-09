@@ -194,8 +194,11 @@ class Trainer:
                 if self.config.MODEL_TYPE == "llama":
                     try:
                         if message["role"] == "user":
-                            user_content = message["content"]
-                            
+                            user_content = message["content"].split("\n\n")[0]
+                            if len(message["content"].split("\n\n")) > 1:
+                                after_user_content = message["content"].split("\n\n")[1]
+                            else:
+                                after_user_content = ""
                             # Estimate token usage
                             system_msgs = [m for m in chat_data if m["role"] == "system"]
                             assistant_msgs = [m for m in chat_data if m["role"] == "assistant"]
@@ -204,16 +207,18 @@ class Trainer:
                     
                     system_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in system_msgs)
                     assistant_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in assistant_msgs)
+                    after_user_tokens = len(self.tokenizer.encode(after_user_content, add_special_tokens=False))
                     special_tokens_estimate = 50
                     
-                    reserved_tokens = system_tokens + assistant_tokens + special_tokens_estimate
+                    reserved_tokens = system_tokens + assistant_tokens + special_tokens_estimate + after_user_tokens
                     available_for_user = self.config.MAX_LENGTH - reserved_tokens
                     
                     # Truncate if necessary
                     user_tokens = self.tokenizer.encode(user_content, add_special_tokens=False)
                     if len(user_tokens) > available_for_user:
                         truncated_user_tokens = user_tokens[:available_for_user]
-                        message["content"] = self.tokenizer.decode(truncated_user_tokens, skip_special_tokens=True)
+                        truncated_user_content = self.tokenizer.decode(truncated_user_tokens, skip_special_tokens=True)
+                        message["content"] = truncated_user_content + "\n\n" + after_user_content if after_user_content.strip() else truncated_user_content
             
             # Apply chat template
             try:

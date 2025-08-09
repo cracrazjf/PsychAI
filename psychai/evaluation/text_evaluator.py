@@ -155,7 +155,27 @@ class TextEvaluator:
         self.tokenizer = tokenizer
         self.verbose = verbose
 
+    def free_memory(self) -> None:
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                del self.model
+                print("✅ Current model deleted")
+            except Exception:
+                pass
+        if hasattr(self, "tokenizer") and self.tokenizer is not None:
+            try:
+                del self.tokenizer
+                print("✅ Current tokenizer deleted")
+            except Exception:
+                pass
+        gc.collect()
+        torch.cuda.empty_cache()
+        self.model = None
+        self.tokenizer = None
+        print("✅ Cache cleared")
+
     def set_model(self, model: Any, tokenizer: Any) -> None:
+        self.free_memory()
         self.model = model
         self.tokenizer = tokenizer
 
@@ -175,9 +195,8 @@ class TextEvaluator:
             prompt = formatter.from_chat(input_data)
 
         inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-            self.model = self.model.cuda()
+        device = next(self.model.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
             outputs = self.model.generate(
