@@ -16,6 +16,7 @@ import json
 import ast
 import gc
 import tqdm
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -417,6 +418,7 @@ def benchmark_text(
             except Exception as e:
                 results[model_name][dataset_name] = None
                 print(f"❌ {model_name} on {dataset_name} failed: {e}")
+                traceback.print_exc()
 
     if save_summary:
         out_dir = Path(results_dir)
