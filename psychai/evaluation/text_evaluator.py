@@ -373,8 +373,8 @@ def benchmark_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
-    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     evaluator: Optional[TextEvaluator] = None,
+    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     labels_map: Optional[Dict[str, List[str]]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -441,8 +441,8 @@ def compare_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
-    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     evaluator: Optional[TextEvaluator] = None,
+    max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     labels: Optional[List[str]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -582,10 +582,10 @@ def interactive_text(models_root: str, data_root: str) -> None:
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
-                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
+                benchmark_text(mdl_list, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
                                temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels_map=labels_map)
             else:
-                benchmark_text(mdl_list, dss_list, models_root, data_root, mm, evaluator, num_samples=num_samples, labels_map=labels_map)
+                benchmark_text(mdl_list, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels_map=labels_map)
             continue
         if user == "compare":
             mdl = input("Models (comma): ").strip()
@@ -605,10 +605,10 @@ def interactive_text(models_root: str, data_root: str) -> None:
             gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
                 max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
-                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, max_new_tokens=max_new_tokens, 
+                compare_text(mdl_names, dset, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
                              temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels=labels)
             else:
-                compare_text(mdl_names, dset, models_root, data_root, mm, evaluator, num_samples=num_samples, labels=labels)
+                compare_text(mdl_names, dset, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels=labels)
             continue
 
         print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
