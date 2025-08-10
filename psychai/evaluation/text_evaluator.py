@@ -290,7 +290,8 @@ class TextEvaluator:
                 "predicted_labels": pred_labels,
                 "true_labels": true_labels,
             })
-
+        if self.verbose:
+            self.print_results(base)
         return base
 
     @staticmethod
@@ -398,7 +399,7 @@ def benchmark_text(
     if mm is None:
         mm = ModelManager()
     if evaluator is None:
-        evaluator = TextEvaluator(verbose=False)
+        evaluator = TextEvaluator(verbose=True)
 
     for model_name in model_list:
         model_path = models_dict.get(model_name, model_name)  # allow HF ref
@@ -454,7 +455,7 @@ def compare_text(
     if mm is None:
         mm = ModelManager()
     if evaluator is None:
-        evaluator = TextEvaluator(verbose=False)
+        evaluator = TextEvaluator(verbose=True)
 
     results: Dict[str, Optional[float]] = {}
     for model_name in model_names:
