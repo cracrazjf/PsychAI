@@ -7,8 +7,7 @@ This module provides utilities for:
 - Model configuration and setup
 """
 
-from .loader import ModelLoader, load_model, load_model_unsloth
-from .lora import apply_lora, apply_lora_unsloth
+from .llm_loader import ModelLoader, load_model, load_model_unsloth, apply_lora, apply_lora_unsloth
 
 __all__ = [
     "ModelLoader",

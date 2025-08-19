@@ -10,8 +10,8 @@ import os
 from re import T
 from typing import Dict, Optional
 
-from ..config.text import TextTrainingConfig
-from ..config.settings import SettingsConfig
+from ...config.training import TrainingConfig
+from ...config.settings import SettingsConfig
 
 
 def _ensure_dir(path: Optional[str]) -> Optional[str]:
@@ -21,7 +21,7 @@ def _ensure_dir(path: Optional[str]) -> Optional[str]:
     return path
 
 
-def ensure_training_dirs(config: TextTrainingConfig) -> Dict[str, str]:
+def ensure_training_dirs(config: TrainingConfig) -> Dict[str, str]:
     """
     Ensure key training directories exist based on TextTrainingConfig.
     Returns a mapping of logical names to absolute paths.
@@ -64,7 +64,7 @@ def ensure_cache_dirs(settings: SettingsConfig, set_env: bool = False) -> Dict[s
 
 
 def ensure_all_dirs(
-    config: TextTrainingConfig, settings: Optional[SettingsConfig] = None, set_env: bool = True
+    config: TrainingConfig, settings: Optional[SettingsConfig] = None, set_env: bool = True
 ) -> Dict[str, Dict[str, str]]:
     """
     Ensure both training and cache directories.

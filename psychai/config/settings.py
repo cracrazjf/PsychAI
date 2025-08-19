@@ -39,10 +39,11 @@ class SettingsConfig:
     HF_TOKEN = os.getenv("HF_TOKEN", None)
 
     def __init__(self, **overrides):
+        print(overrides)
         for k, v in overrides.items():
             setattr(self, k, v)
+        print(self.HF_TOKEN)
     
-    @classmethod
     def setup_environment(cls):
         """Setup environment variables and cache directories"""
         
@@ -74,7 +75,6 @@ class SettingsConfig:
         
         print("✅ Environment setup completed!")
         
-    @classmethod
     def login_huggingface(cls):
         """Login to Hugging Face if token is provided"""
         if cls.HF_TOKEN:
@@ -88,7 +88,3 @@ class SettingsConfig:
                 print(f"⚠️ Hugging Face login failed: {e}")
         else:
             print("ℹ️  No HF token provided, skipping login")
-
-    def __init__(self, **overrides):
-        for k, v in overrides.items():
-            setattr(self, k, v)

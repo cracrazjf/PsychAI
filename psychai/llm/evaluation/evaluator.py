@@ -153,7 +153,7 @@ class PromptFormatter:
         return "\n\n".join(parts)
 
 
-class TextEvaluator:
+class Evaluator:
     """Simple text evaluator for generation and classification."""
 
     def __init__(self, verbose: bool = True) -> None:
@@ -374,7 +374,7 @@ def benchmark_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
-    evaluator: Optional[TextEvaluator] = None,
+    evaluator: Optional[Evaluator] = None,
     max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     labels_map: Optional[Dict[str, List[str]]] = None,
     num_samples: Optional[int] = None,
@@ -399,7 +399,7 @@ def benchmark_text(
     if mm is None:
         mm = ModelManager()
     if evaluator is None:
-        evaluator = TextEvaluator(verbose=True)
+        evaluator = Evaluator(verbose=True)
 
     for model_name in model_list:
         model_path = models_dict.get(model_name, model_name)  # allow HF ref
@@ -442,7 +442,7 @@ def compare_text(
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
-    evaluator: Optional[TextEvaluator] = None,
+    evaluator: Optional[Evaluator] = None,
     max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
     labels: Optional[List[str]] = None,
     num_samples: Optional[int] = None,
@@ -455,7 +455,7 @@ def compare_text(
     if mm is None:
         mm = ModelManager()
     if evaluator is None:
-        evaluator = TextEvaluator(verbose=True)
+        evaluator = Evaluator(verbose=True)
 
     results: Dict[str, Optional[float]] = {}
     for model_name in model_names:

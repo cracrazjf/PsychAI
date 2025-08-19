@@ -5,9 +5,9 @@ Exports a simple, text-focused evaluator and runner utilities.
 Audio/vision evaluators can be added later with the same interface.
 """
 
-from .text_evaluator import (
-    TextEvaluator,
-    ModelManager,
+from .evaluator import (
+    Evaluator,
+    ModelManager,   
     benchmark_text,
     compare_text,
     interactive_text
@@ -21,7 +21,7 @@ except Exception:  # if file removed later
     _LegacyModelEvaluator = None
 
 __all__ = [
-    "TextEvaluator",
+    "Evaluator",    
     "ModelManager",
     "benchmark_text",
     "compare_text",

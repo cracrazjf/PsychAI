@@ -1,69 +1,38 @@
+"""
+PsychAI: A modular framework for psychology research with AI
+
+This package provides tools for:
+- Large Language Model (LLM) training and evaluation
+- Vision model training and evaluation  
+- Simple neural network implementations
+- Utility functions for data processing and visualization
+
+Main modules:
+- psychai.llm: LLM training, evaluation, and utilities
+- psychai.vision: Vision model training and evaluation
+- psychai.simple_nn: Simple neural network implementations
+- psychai.config: Configuration management
+- psychai.utils: General utilities
+"""
+
 __version__ = "0.1.0"
-__author__ = "Jingfeng(Craig) Zhang"
+__author__ = "Jingfeng(Craig) Zhang"  
 __email__ = "jz44@illinois.edu"
 
-# Import main classes for easy access
-from .config import SettingsConfig, TextTrainingConfig, VisionTrainingConfig, AudioTrainingConfig
-from .models import ModelLoader, load_model, load_model_unsloth, apply_lora, apply_lora_unsloth
-from .training import Trainer
-from .data import (
-    load_json, save_json, train_test_split, validate_format,
-    convert_to_chat_format, load_csv_as_chat, load_image, load_audio,
-    load_csv_as_instruction, convert_to_instruction_format,
-)
-from .evaluation import (
-    TextEvaluator, ModelManager, benchmark_text, compare_text, interactive_text
-)
-from .utils import (
-    print_memory_usage,
-    ensure_training_dirs,
-    ensure_cache_dirs,
-    ensure_all_dirs,
-)
+# Import main submodules for easy access
+from . import llm
+from . import vision  
+from . import simple_nn
+from . import config
+from . import utils
 
-# Make key classes available at package level
 __all__ = [
-    # Configuration
-    "SettingsConfig",
-    "TextTrainingConfig",
-    "VisionTrainingConfig",
-    "AudioTrainingConfig",
-    
-    # Models
-    "ModelLoader",
-    "load_model",
-    "load_model_unsloth",
-    "apply_lora",
-    "apply_lora_unsloth",
-    
-    # Training
-    "Trainer",
-    
-    # Data
-    "load_json",
-    "save_json",
-    "train_test_split",
-    "validate_format",
-    "convert_to_chat_format",
-    "load_csv_as_chat",
-    "load_csv_as_instruction",
-    "convert_to_instruction_format",
-    "load_image",
-    "load_audio",
-    
-    # Evaluation
-    "TextEvaluator",
-    "ModelManager",
-    "benchmark_text",
-    "compare_text",
-    "interactive_text",
-    
-    # Utilities
-    "print_memory_usage",
-    "ensure_training_dirs",
-    "ensure_cache_dirs",
-    "ensure_all_dirs",
-    
-    # Version
     "__version__",
+    "__author__", 
+    "__email__",
+    "llm",
+    "vision",
+    "simple_nn", 
+    "config",
+    "utils",
 ]

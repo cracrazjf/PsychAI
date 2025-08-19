@@ -61,6 +61,16 @@ vision = [
     "Pillow>=10.0.0",
     "torchvision>=0.16.0",
 ]
+vision-timm = [
+    "timm>=0.9.0",
+]
+vision-hf = [
+    "transformers>=4.38.0",
+    "accelerate>=0.24.0",
+]
+vision-clip = [
+    "open_clip_torch>=2.24.0",
+]
 dev = [
     "pytest>=6.0",
     "black>=22.0",
@@ -80,15 +90,18 @@ Documentation = "https://github.com/cracrazjf/PsychAI#readme"
 Repository = "https://github.com/cracrazjf/PsychAI.git"
 "Bug Tracker" = "https://github.com/cracrazjf/PsychAI/issues"
 
-[project.scripts]
-psychai-train = "psychai.scripts.train:main"
-psychai-evaluate = "psychai.scripts.evaluate:main"
+# [project.scripts]
+# Scripts will be added when CLI modules are implemented
+# psychai-train = "psychai.scripts.train:main"
+# psychai-evaluate = "psychai.scripts.evaluate:main"
 
 [tool.setuptools]
-packages = ["psychai"]
+include-package-data = true
 
-#[tool.setuptools.package-data]
-#"psychai" = []
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["psychai*"]
+exclude = ["tests*"]
 
 [tool.black]
 line-length = 100
