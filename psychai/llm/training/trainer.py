@@ -98,7 +98,7 @@ class Trainer:
                     dropout=self.config.LORA_DROPOUT,
                     bias=self.config.BIAS,
                     target_modules=self.config.LORA_TARGET_MODULES,
-                    random_state=self.config.RANDOM_STATE
+                    random_state=self.config.RANDOM_STATE,
                     use_gradient_checkpointing=self.config.GRADIENT_CHECKPOINTING,
                     use_rslora=self.config.USE_RSLORA,
                     loftq_config=self.config.LOFTQ_CONFIG,
