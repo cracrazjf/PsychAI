@@ -485,7 +485,7 @@ def compare_text(
         mm.load(model_name, model_path, model_type=model_type)
         try:
             if reasoning_effort is None:
-            res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples,
+                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples,
                                                         max_new_tokens=max_new_tokens, temperature=temperature, 
                                                         do_sample=do_sample, top_p=top_p, top_k=top_k)
             else:
