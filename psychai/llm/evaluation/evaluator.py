@@ -495,7 +495,7 @@ def interactive_text(models_root: str, data_root: str) -> None:
         print(f"⚠️ No local models found under {models_root}. You can still load HF refs by name via 'switch <ref>'.")
 
     mm = ModelManager()
-    evaluator = TextEvaluator()
+    evaluator = Evaluator()
 
     # Load first model if exists
     load_default = input("Load default model? (y/n)").strip()
