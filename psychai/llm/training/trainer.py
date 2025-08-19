@@ -25,7 +25,7 @@ from transformers import TrainingArguments, Trainer as HFTrainer
 from sklearn.metrics import accuracy_score
 
 from ..models import ModelLoader, load_model_unsloth, apply_lora, apply_lora_unsloth
-from ...config.training import TrainingConfig
+from ...config.llm_training import LLMTrainingConfig
 
 from ..utils import print_memory_usage
 from ..data import train_test_split
@@ -39,14 +39,14 @@ class Trainer:
     Can work with any dataset format as long as it's converted to the expected format.
     """
     
-    def __init__(self, config: TrainingConfig = None):
+    def __init__(self, config: LLMTrainingConfig = None):
         """
         Initialize trainer with configuration
         
         Args:
             config: Training configuration instance
         """
-        self.config = config or TextTrainingConfig()
+        self.config = config or LLMTrainingConfig()
         self.model = None
         self.tokenizer = None
         self.trainer = None
