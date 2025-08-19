@@ -314,7 +314,7 @@ class Trainer:
             per_device_train_batch_size=self.config.BATCH_SIZE,
             gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
             warmup_steps=self.config.WARMUP_STEPS,
-            max_steps=self.config.NUM_EPOCHS*100,
+            max_steps=self.config.MAX_STEPS,
             # num_train_epochs=self.config.NUM_EPOCHS,
             learning_rate=self.config.LEARNING_RATE,
             fp16=not torch.cuda.is_bf16_supported(),

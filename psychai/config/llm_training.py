@@ -53,6 +53,7 @@ class LLMTrainingConfig:
     
     # Training
     NUM_EPOCHS = int(os.getenv("NUM_EPOCHS", 10))
+    MAX_STEPS = int(os.getenv("MAX_STEPS", 100))
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", 16))
     GRAD_ACCUM_STEPS = int(os.getenv("GRAD_ACCUM_STEPS", 1))
     GRAD_CLIP = os.getenv("GRAD_CLIP", None)
