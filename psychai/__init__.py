@@ -18,21 +18,3 @@ Main modules:
 __version__ = "0.1.0"
 __author__ = "Jingfeng(Craig) Zhang"  
 __email__ = "jz44@illinois.edu"
-
-# Import main submodules for easy access
-from . import llm
-from . import vision  
-from . import simple_nn
-from . import config
-from . import utils
-
-__all__ = [
-    "__version__",
-    "__author__", 
-    "__email__",
-    "llm",
-    "vision",
-    "simple_nn", 
-    "config",
-    "utils",
-]
