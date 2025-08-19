@@ -80,6 +80,7 @@ class SettingsConfig:
         if cls.HF_TOKEN:
             try:
                 from huggingface_hub import login
+                print(cls.HF_ENDPOINT)
                 login(token=cls.HF_TOKEN)
                 print("✅ Hugging Face login completed!")
             except ImportError:
