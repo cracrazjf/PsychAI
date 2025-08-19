@@ -44,12 +44,8 @@ class ModelManager:
         self.model_type: Optional[str] = None
         self.verbose = verbose
 
-    def load(self, model_name: str, model_ref: str, model_type: str = "local", max_seq_length: int = 512,
+    def load(self, model_name: str, model_ref: str, model_type: str = "llama", max_seq_length: int = 512,
              load_in_4bit: bool = False) -> Tuple[Any, Any]:
-        """Load a model by reference.
-
-        model_type: "local" | "huggingface" | "finetuned"
-        """
 
         self.free_memory()
 
@@ -114,11 +110,16 @@ class PromptFormatter:
     def __init__(self, tokenizer: Any) -> None:
         self.tokenizer = tokenizer
 
-    def from_chat(self, messages: List[Dict[str, str]]) -> str:
+    def from_chat(self, messages: List[Dict[str, str]], reasoning_effort: Optional[str] = None) -> str:
         if hasattr(self.tokenizer, "apply_chat_template"):
             try:
-                return self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+                if reasoning_effort is not None:
+                    return self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True, reasoning_effort=reasoning_effort
+                    )
+                else:
+                    return self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
                 )
             except Exception:
                 pass
@@ -131,7 +132,7 @@ class PromptFormatter:
         parts.append("[assistant]")
         return "\n".join(parts)
 
-    def from_text(self, text: str, system: Optional[str] = None, instruction: Optional[str] = None) -> str:
+    def from_text(self, text: str, system: Optional[str] = None, instruction: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         if hasattr(self.tokenizer, "apply_chat_template"):
             try:
                 messages = []
@@ -139,9 +140,14 @@ class PromptFormatter:
                     messages.append({"role": "system", "content": system})
                 content = f"{instruction}\n\n{text}" if instruction else text
                 messages.append({"role": "user", "content": content})
-                return self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
+                if reasoning_effort is not None:
+                    return self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True, reasoning_effort=reasoning_effort
+                    )
+                else:
+                    return self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
             except Exception:
                 pass
         parts: List[str] = []
@@ -165,14 +171,14 @@ class Evaluator:
 
     def chat(self, mm: ModelManager, input_data: Union[str, List[Dict[str, str]]],
              max_new_tokens: int = 128, temperature: float = 0.7,
-             do_sample: bool = True, top_p: float = 0.95, top_k: int = 50) -> str:
+             do_sample: bool = True, top_p: float = 0.95, top_k: int = 50, reasoning_effort: Optional[str] = None) -> str:
         self._ensure_model(mm)
         formatter = PromptFormatter(mm.tokenizer)
 
         if isinstance(input_data, str):
-            prompt = formatter.from_text(input_data)
+            prompt = formatter.from_text(input_data, reasoning_effort=reasoning_effort)
         else:
-            prompt = formatter.from_chat(input_data)
+            prompt = formatter.from_chat(input_data, reasoning_effort=reasoning_effort)
 
         inputs = mm.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
         device = next(mm.model.parameters()).device
@@ -197,7 +203,8 @@ class Evaluator:
         return mm.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def evaluate_generation(self, mm: ModelManager, test_data: List[List[Dict[str, str]]], max_samples: Optional[int] = None ,
-                            max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50) -> Dict[str, Any]:
+                            max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, 
+                            top_k: int = 50, reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
         if not validate_format(test_data, "chat"):
             raise ValueError("test_data must be in chat format")
 
@@ -214,7 +221,10 @@ class Evaluator:
             if not user_messages or not assistant_messages:
                 continue
             prompt = formatter.from_chat(user_messages)
-            pred = self.chat(mm, prompt, max_new_tokens=max_new_tokens, temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k)
+            if reasoning_effort is not None:
+                pred = self.chat(mm, prompt, max_new_tokens=max_new_tokens, temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, reasoning_effort=reasoning_effort)
+            else:
+                pred = self.chat(mm, prompt, max_new_tokens=max_new_tokens, temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k)
             predictions.append(pred)
             truths.append(assistant_messages[-1].get("content", ""))
 
@@ -245,9 +255,14 @@ class Evaluator:
         label_extractor: Optional[Callable[[str, Optional[List[str]]], str]] = None,
         max_samples: Optional[int] = None,
         max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
+        reasoning_effort: Optional[str] = None
     ) -> Dict[str, Any]:
-        base = self.evaluate_generation(mm, test_data, max_samples=max_samples, max_new_tokens=max_new_tokens,
+        if reasoning_effort is None:
+            base = self.evaluate_generation(mm, test_data, max_samples=max_samples, max_new_tokens=max_new_tokens,
                                         temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k)
+        else:
+            base = self.evaluate_generation(mm, test_data, max_samples=max_samples, max_new_tokens=max_new_tokens,
+                                        temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, reasoning_effort=reasoning_effort)
         preds = base.get("predictions", [])
         truths = base.get("ground_truths", [])
 
@@ -370,12 +385,14 @@ def load_test_data(dataset_name: str, data_root: str) -> List[List[Dict[str, str
 
 def benchmark_text(
     model_names: Union[List[str], str],
+    model_types: Union[List[str], str],
     dataset_names: Union[List[str], str],
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
     evaluator: Optional[Evaluator] = None,
     max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
+    reasoning_effort: Optional[str] = None,
     labels_map: Optional[Dict[str, List[str]]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -401,10 +418,8 @@ def benchmark_text(
     if evaluator is None:
         evaluator = Evaluator(verbose=True)
 
-    for model_name in model_list:
+    for model_name, model_type in zip(model_list, model_types):
         model_path = models_dict.get(model_name, model_name)  # allow HF ref
-        # Decide type: local if exists, else huggingface
-        model_type = "local" if Path(model_path).exists() else "huggingface"
         mm.load(model_name, model_path, model_type=model_type)
 
         results[model_name] = {}
@@ -412,9 +427,14 @@ def benchmark_text(
             try:
                 test_data = load_test_data(dataset_name, data_root)
                 labels = labels_map.get(dataset_name) if labels_map else None
-                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples, 
-                                                        max_new_tokens=max_new_tokens, temperature=temperature, 
-                                                        do_sample=do_sample, top_p=top_p, top_k=top_k)
+                if reasoning_effort is None:
+                    res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples, 
+                                                            max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                            do_sample=do_sample, top_p=top_p, top_k=top_k)
+                else:
+                    res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples, 
+                                                            max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                            do_sample=do_sample, top_p=top_p, top_k=top_k, reasoning_effort=reasoning_effort)
                 results[model_name][dataset_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
             except Exception as e:
                 results[model_name][dataset_name] = None
@@ -438,12 +458,14 @@ def benchmark_text(
 
 def compare_text(
     model_names: List[str],
+    model_types: List[str],
     dataset_name: str,
     models_root: str,
     data_root: str,
     mm: Optional[ModelManager] = None,
     evaluator: Optional[Evaluator] = None,
     max_new_tokens: int = 128, temperature: float = 0.7, do_sample: bool = True, top_p: float = 0.95, top_k: int = 50,
+    reasoning_effort: Optional[str] = None,
     labels: Optional[List[str]] = None,
     num_samples: Optional[int] = None,
     save_summary: bool = True,
@@ -458,14 +480,18 @@ def compare_text(
         evaluator = Evaluator(verbose=True)
 
     results: Dict[str, Optional[float]] = {}
-    for model_name in model_names:
+    for model_name, model_type in zip(model_names, model_types):
         model_path = models_dict.get(model_name, model_name)
-        model_type = "local" if Path(model_path).exists() else "huggingface"
         mm.load(model_name, model_path, model_type=model_type)
         try:
+            if reasoning_effort is None:
             res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples,
-                                                    max_new_tokens=max_new_tokens, temperature=temperature, 
-                                                    do_sample=do_sample, top_p=top_p, top_k=top_k)
+                                                        max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                        do_sample=do_sample, top_p=top_p, top_k=top_k)
+            else:
+                res = evaluator.evaluate_classification(mm, test_data, labels=labels, max_samples=num_samples,
+                                                        max_new_tokens=max_new_tokens, temperature=temperature, 
+                                                        do_sample=do_sample, top_p=top_p, top_k=top_k, reasoning_effort=reasoning_effort)
             results[model_name] = float(res.get("accuracy", res.get("exact_match_accuracy", 0.0)))
         except Exception as e:
             results[model_name] = None
@@ -498,20 +524,21 @@ def interactive_text(models_root: str, data_root: str) -> None:
     evaluator = Evaluator()
 
     # Load first model if exists
-    load_default = input("Load default model? (y/n)").strip()
-    if load_default == "y":
-        current_model_name: Optional[str] = next(iter(models.keys()), None)
-        if current_model_name:
-            model_path = models[current_model_name]
-            mm.load(current_model_name, model_path, model_type="local")
-            print(f"✅ Loaded default model: {current_model_name}")
-        else:
-            print("⚠️ No default model found.")
-    else:
-        print("You can always load a model later by using 'switch <model_name>'.")
+    # load_default = input("Load default model? (y/n)").strip()
+    # if load_default == "y":
+    #     current_model_name: Optional[str] = next(iter(models.keys()), None)
+    #     if current_model_name:
+    #         model_path = models[current_model_name]
+    #         mm.load(current_model_name, model_path, model_type="local")
+    #         print(f"✅ Loaded default model: {current_model_name}")
+    #     else:
+    #         print("⚠️ No default model found.")
+    # else:
+    #     print("You can always load a model later by using 'switch <model_name>'.")
 
-    print("\n🎮 Interactive Text Evaluation")
-    print("Commands: chat | switch <model_or_hf_ref> | models | datasets | benchmark | compare | quit")
+    print("\n🎮 Welcome to PSYCHAI Interactive Text Evaluation")
+    print("You can load/switch between models by using 'switch <model_name>'.")
+    print("Commands: chat | switch <model_name>/<model_type> | models | datasets | benchmark | compare | quit")
 
     while True:
         try:
@@ -530,11 +557,9 @@ def interactive_text(models_root: str, data_root: str) -> None:
             print("Datasets:", ", ".join(datasets.keys()) or "(none)")
             continue
         if user.startswith("switch "):
-            ref = user.split(" ", 1)[1].strip()
-            ref_path = models.get(ref, ref)
-            current_model_name = ref
-            mtype = "local" if Path(ref_path).exists() else "huggingface"
-            mm.load(current_model_name, ref_path, model_type=mtype)
+            current_model_name, model_type = user.split(" ", 1)[1].strip().split("/")
+            ref_path = models.get(current_model_name, current_model_name)
+            mm.load(current_model_name, ref_path, model_type=model_type) 
             print(f"🔄 Switched to: {current_model_name}")
             continue
         if user == "chat":
@@ -543,7 +568,10 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 continue
             print(f"Chatting with {current_model_name}")
             print("Type 'exit' to leave chat.")
-            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
+            if mm.model_type == "gpt-oss":
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort): ").strip()
+            else:
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             while True:
                 try:
                     msg = input("You: ").strip()
@@ -555,15 +583,31 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 if not msg:
                     continue
                 if gen_args:
-                    max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
-                    print("Model:", evaluator.chat(mm, msg, max_new_tokens=max_new_tokens, temperature=temperature, 
-                        do_sample=do_sample, top_p=top_p, top_k=top_k))
+                    if mm.model_type == "gpt-oss":
+                        max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort = map(float, gen_args.split(","))
+                        print("Model:", evaluator.chat(mm, msg, max_new_tokens=max_new_tokens, temperature=temperature, 
+                            do_sample=do_sample, top_p=top_p, top_k=top_k, reasoning_effort=reasoning_effort))
+                    else:
+                        max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                        print("Model:", evaluator.chat(mm, msg, max_new_tokens=max_new_tokens, temperature=temperature, 
+                            do_sample=do_sample, top_p=top_p, top_k=top_k))
                 else:
                     print("Model:", evaluator.chat(mm, msg))
             continue
         if user == "benchmark":
             mdl = input("Models (comma or 'all'): ").strip()
             mdl_list = "all" if mdl == "all" else [m.strip() for m in mdl.split(",")]
+            model_names = list(models.keys()) if mdl_list == 'all' else mdl_list
+
+            mdl_types = input(f"Enter model types for each model {model_names} (separated by comma): ").strip()
+            if mdl_types:
+                mdl_types = ast.literal_eval(mdl_types)
+                mdl_types_map = {model_names[i]: mdl_types[i] for i in range(len(model_names))}
+                print(mdl_types_map)
+            else:
+                mdl_types_map = None
+        
+
             dss = input("Datasets (comma or 'all'): ").strip()
             dss_list = "all" if dss == "all" else [d.strip() for d in dss.split(",")]
             num_samples = input("Num samples: ").strip()
@@ -580,17 +624,32 @@ def interactive_text(models_root: str, data_root: str) -> None:
             else:
                 labels_map = None
             
-            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
+            if mm.model_type == "gpt-oss":
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort): ").strip()
+            else:
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
             if gen_args:
-                max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
-                benchmark_text(mdl_list, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
+                if mm.model_type == "gpt-oss":
+                    max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort = map(float, gen_args.split(","))
+                    benchmark_text(mdl_list, mdl_types_map, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
+                               temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels_map=labels_map, reasoning_effort=reasoning_effort)
+                else:
+                    max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                    benchmark_text(mdl_list, mdl_types_map, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
                                temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels_map=labels_map)
             else:
-                benchmark_text(mdl_list, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels_map=labels_map)
+                benchmark_text(mdl_list, mdl_types_map, dss_list, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels_map=labels_map)
             continue
         if user == "compare":
             mdl = input("Models (comma): ").strip()
             mdl_names = [m.strip() for m in mdl.split(",")]
+            mdl_types = input(f"Enter model types for each model {mdl_names} (separated by comma): ").strip()
+            if mdl_types:
+                mdl_types = ast.literal_eval(mdl_types)
+                mdl_types_map = {mdl_names[i]: mdl_types[i] for i in range(len(mdl_names))}
+                print(mdl_types_map)
+            else:
+                mdl_types_map = None
             dset = input("Dataset: ").strip()
             num_samples = input("Num samples: ").strip()
             if num_samples:
@@ -603,13 +662,21 @@ def interactive_text(models_root: str, data_root: str) -> None:
                 print(labels)
             else:
                 labels = None
-            gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
-            if gen_args:
-                max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
-                compare_text(mdl_names, dset, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
-                             temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels=labels)
+            if mm.model_type == "gpt-oss":
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort): ").strip()
             else:
-                compare_text(mdl_names, dset, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels=labels)
+                gen_args = input("Generation args separated by commas (max_new_tokens, temperature, do_sample, top_p, top_k): ").strip()
+            if gen_args:
+                if mm.model_type == "gpt-oss":
+                    max_new_tokens, temperature, do_sample, top_p, top_k, reasoning_effort = map(float, gen_args.split(","))
+                    compare_text(mdl_names, mdl_types_map, dset, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
+                               temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels=labels, reasoning_effort=reasoning_effort)
+                else:
+                    max_new_tokens, temperature, do_sample, top_p, top_k = map(float, gen_args.split(","))
+                    compare_text(mdl_names, mdl_types_map, dset, models_root, data_root, mm=mm, evaluator=evaluator, max_new_tokens=max_new_tokens, 
+                                 temperature=temperature, do_sample=do_sample, top_p=top_p, top_k=top_k, num_samples=num_samples, labels=labels)
+            else:
+                compare_text(mdl_names, mdl_types_map, dset, models_root, data_root, mm=mm, evaluator=evaluator, num_samples=num_samples, labels=labels)
             continue
 
         print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")

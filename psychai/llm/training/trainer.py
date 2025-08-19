@@ -73,6 +73,9 @@ class Trainer:
         """
         model_name = model_name or self.config.MODEL_NAME
         model_path = model_path or self.config.MODEL_PATH
+        max_seq_length = self.config.MAX_LENGTH
+        load_in_4bit = self.config.LOAD_IN_4BIT
+        full_finetuning = self.config.FULL_FINETUNING
         
         print(f"🚀 Loading model: {model_name} from {model_path}")
         
@@ -80,9 +83,10 @@ class Trainer:
             model, tokenizer = load_model_unsloth(
                 model_name=model_name,
                 model_path=model_path,
-                max_seq_length=self.config.MAX_LENGTH,
-                load_in_4bit=True,
-                for_training=for_training
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+                for_training=for_training,
+                full_finetuning=full_finetuning
             )
             
             # Apply LoRA if training
@@ -92,8 +96,12 @@ class Trainer:
                     rank=self.config.LORA_RANK,
                     alpha=self.config.LORA_ALPHA,
                     dropout=self.config.LORA_DROPOUT,
+                    bias=self.config.BIAS,
                     target_modules=self.config.LORA_TARGET_MODULES,
                     random_state=self.config.RANDOM_STATE
+                    use_gradient_checkpointing=self.config.GRADIENT_CHECKPOINTING,
+                    use_rslora=self.config.USE_RSLORA,
+                    loftq_config=self.config.LOFTQ_CONFIG,
                 )
         else:
             # Use standard model loading
@@ -190,43 +198,50 @@ class Trainer:
             
             # Smart truncation for long inputs
             for message in chat_data:
-                if self.config.MODEL_TYPE == "llama":
-                    try:
-                        if message["role"] == "user":
-                            user_content = message["content"].split("\n\n")[0]
-                            if len(message["content"].split("\n\n")) > 1:
-                                after_user_content = message["content"].split("\n\n")[1]
-                            else:
-                                after_user_content = ""
-                            # Estimate token usage
-                            system_msgs = [m for m in chat_data if m["role"] == "system"]
-                            assistant_msgs = [m for m in chat_data if m["role"] == "assistant"]
-                    except:
-                        raise ValueError(f"Failed to truncate user message: {e}")
-                    
-                    system_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in system_msgs)
-                    assistant_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in assistant_msgs)
-                    after_user_tokens = len(self.tokenizer.encode(after_user_content, add_special_tokens=False))
-                    special_tokens_estimate = 50
-                    
-                    reserved_tokens = system_tokens + assistant_tokens + special_tokens_estimate + after_user_tokens
-                    available_for_user = self.config.MAX_LENGTH - reserved_tokens
-                    
-                    # Truncate if necessary
-                    user_tokens = self.tokenizer.encode(user_content, add_special_tokens=False)
-                    if len(user_tokens) > available_for_user:
-                        truncated_user_tokens = user_tokens[:available_for_user]
-                        truncated_user_content = self.tokenizer.decode(truncated_user_tokens, skip_special_tokens=True)
-                        message["content"] = truncated_user_content + "\n\n" + after_user_content if after_user_content.strip() else truncated_user_content
+                try:
+                    if message["role"] == "user":
+                        user_content = message["content"].split("\n\n")[0]
+                        if len(message["content"].split("\n\n")) > 1:
+                            after_user_content = message["content"].split("\n\n")[1]
+                        else:
+                            after_user_content = ""
+                        # Estimate token usage
+                        system_msgs = [m for m in chat_data if m["role"] == "system"]
+                        assistant_msgs = [m for m in chat_data if m["role"] == "assistant"]
+                except:
+                    raise ValueError(f"Failed to truncate user message: {e}")
+                
+                system_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in system_msgs)
+                assistant_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in assistant_msgs)
+                after_user_tokens = len(self.tokenizer.encode(after_user_content, add_special_tokens=False))
+                special_tokens_estimate = 50
+                
+                reserved_tokens = system_tokens + assistant_tokens + special_tokens_estimate + after_user_tokens
+                available_for_user = self.config.MAX_LENGTH - reserved_tokens
+                
+                # Truncate if necessary
+                user_tokens = self.tokenizer.encode(user_content, add_special_tokens=False)
+                if len(user_tokens) > available_for_user:
+                    truncated_user_tokens = user_tokens[:available_for_user]
+                    truncated_user_content = self.tokenizer.decode(truncated_user_tokens, skip_special_tokens=True)
+                    message["content"] = truncated_user_content + "\n\n" + after_user_content if after_user_content.strip() else truncated_user_content
             
             # Apply chat template
             try:
                 if hasattr(self.tokenizer, 'chat_template') and self.tokenizer.chat_template:
-                    formatted_text = self.tokenizer.apply_chat_template(
-                        chat_data, 
-                        tokenize=False,
-                        add_generation_prompt=False
-                    )
+                    if self.config.MODEL_TYPE == 'gpt-oss':
+                        formatted_text = self.tokenizer.apply_chat_template(
+                            chat_data, 
+                            tokenize=False,
+                            add_generation_prompt=False,
+                            reasoning_effort=self.config.REASONING_EFFORT
+                        )
+                    else:
+                        formatted_text = self.tokenizer.apply_chat_template(
+                            chat_data, 
+                            tokenize=False,
+                            add_generation_prompt=False
+                        )
                 else:
                     if self.config.MODEL_TYPE == "llama":
                         formatted_text = self._format_llama_chat_manual(chat_data)
@@ -244,9 +259,14 @@ class Trainer:
                     {"role": "user", "content": data_sample['input']},
                     {"role": "assistant", "content": data_sample['output']}
                 ]
-                formatted_text = self.tokenizer.apply_chat_template(
-                    chat_data, tokenize=False, add_generation_prompt=False
-                )
+                if self.config.MODEL_TYPE == "gpt-oss":
+                    formatted_text = self.tokenizer.apply_chat_template(
+                        chat_data, tokenize=False, add_generation_prompt=False, reasoning_effort=self.config.REASONING_EFFORT
+                    )
+                else:
+                    formatted_text = self.tokenizer.apply_chat_template(
+                        chat_data, tokenize=False, add_generation_prompt=False
+                    )
             else:
                 formatted_text = str(data_sample)
                 

@@ -134,6 +134,7 @@ def load_model_unsloth(
     model_path: str = None,
     max_seq_length: int = 512, 
     load_in_4bit: bool = True, 
+    full_finetuning: bool = False,
     for_training: bool = True
 ) -> Tuple[Any, Any]:
     """
@@ -167,6 +168,7 @@ def load_model_unsloth(
         dtype=None,  # Auto-detect optimal dtype
         load_in_4bit=load_in_4bit,
         trust_remote_code=True,
+        full_finetuning=full_finetuning,
     )
     
     if not for_training:
