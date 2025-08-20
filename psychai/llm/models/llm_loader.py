@@ -1,14 +1,5 @@
-"""
-Model loading utilities
-
-This module provides functions for loading various types of language models:
-- Standard HuggingFace models
-- Unsloth-optimized models  
-- Local and remote models
-- Quantized models for memory efficiency
-"""
-
 import torch
+import gc
 import logging
 from typing import Tuple, Optional, Any, List
 
@@ -19,6 +10,7 @@ logging.getLogger("transformers").setLevel(logging.INFO)
 # Check for optional dependencies
 try:
     from unsloth import FastLanguageModel
+    from unsloth.data import get_chat_template
     UNSLOTH_AVAILABLE = True
 except ImportError:
     UNSLOTH_AVAILABLE = False
@@ -26,54 +18,105 @@ except ImportError:
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
-
-class ModelLoader:
-    """Main model loading class with various loading strategies"""
-    
+class ModelManager:
     def __init__(self):
-        self.loaded_models = {}
+        self.model = None
+        self.model_name = None
+        self.tokenizer = None
+    def load_model(self, model_name: str, model_path: str, 
+                   use_unsloth: bool, for_training: bool,
+                   max_seq_length: int, load_in_4bit: bool,
+                   full_finetuning: bool, dtype: str):
+        self.free_memory()
         
-    def load_model(
-        self, 
-        model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", 
-        for_training: bool = False,
-        use_unsloth: bool = False,
-        **kwargs
-    ) -> Tuple[Any, Any]:
-        """
-        Load a model using the appropriate strategy
-        
-        Args:
-            model_name: Name or path of the model
-            for_training: Whether model will be used for training
-            use_unsloth: Whether to use Unsloth optimization
-            **kwargs: Additional arguments passed to specific loaders
-            
-        Returns:
-            Tuple of (model, tokenizer)
-        """
+        self.model_name = model_name
         if use_unsloth and UNSLOTH_AVAILABLE:
-            return load_model_unsloth(model_name, for_training=for_training, **kwargs)
+            self.model, self.tokenizer = load_model_unsloth(
+                model_name=model_name,
+                model_path=model_path,
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+                full_finetuning=full_finetuning,
+                dtype=dtype,
+                for_training=for_training
+            )
         else:
-            return load_model(model_name, for_training=for_training, **kwargs)
+            self.model, self.tokenizer = load_model(
+                model_name=model_name,
+                model_path=model_path,
+                load_in_4bit=load_in_4bit,
+                dtype=dtype,
+                for_training=for_training
+            )
 
+    def apply_chat_template(self, chat_template: str):
+        self.tokenizer = get_chat_template(
+            self.tokenizer,
+            chat_template,
+        )
+
+    def apply_lora(self, use_unsloth: bool, 
+                   rank: int, alpha: int, 
+                   dropout: float, target_modules: List[str], 
+                   bias: str, use_gradient_checkpointing: str,
+                   random_state: int, use_rslora: bool,
+                   loftq_config: Optional[Any]):
+
+        if self.model is None:
+            raise ValueError("Model not loaded. Please load the model first.")
+        
+        if use_unsloth and UNSLOTH_AVAILABLE:
+            self.model = apply_lora_unsloth(
+                self.model,
+                rank=rank,
+                alpha=alpha,
+                dropout=dropout,
+                target_modules=target_modules,
+                bias=bias,
+                use_gradient_checkpointing=use_gradient_checkpointing,
+                random_state=random_state,
+                use_rslora=use_rslora,
+                loftq_config=loftq_config
+            )
+        else:
+            self.model = apply_lora(    
+                self.model,
+                rank=rank,
+                alpha=alpha,
+                dropout=dropout,
+                target_modules=target_modules,
+                bias=bias,
+                task_type=task_type
+            )
+
+    def free_memory(self) -> None:
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                del self.model
+                print("✅ Current model deleted")
+            except Exception:
+                pass
+        if hasattr(self, "tokenizer") and self.tokenizer is not None:
+            try:
+                del self.tokenizer
+                print("✅ Current tokenizer deleted")
+            except Exception:
+                pass
+        gc.collect()
+        torch.cuda.empty_cache()
+        self.model = None
+        self.tokenizer = None
+        self.model_name = None
+        print("✅ Cache cleared")
 
 def load_model(
     model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", 
     model_path: str = None,
+    load_in_4bit: bool = True,
+    dtype: str = None,
     for_training: bool = False
 ) -> Tuple[Any, Any]:
-    """
-    Load model using standard HuggingFace transformers
     
-    Args:
-        model_name: Name or path of the model to load
-        model_path: Local path to model (overrides model_name if provided)
-        for_training: Whether model will be used for training (enables quantization)
-        
-    Returns:
-        Tuple of (model, tokenizer)
-    """
     print(f"Loading model: {model_name} from {model_path}")
     
     # Load tokenizer
@@ -89,7 +132,7 @@ def load_model(
         if torch.cuda.is_available():
             # Use CUDA with 4-bit quantization for training
             bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
+                load_in_4bit=load_in_4bit,
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16
@@ -98,7 +141,7 @@ def load_model(
                 model_path if model_path else model_name,
                 quantization_config=bnb_config,
                 device_map="auto",
-                torch_dtype=torch.bfloat16
+                torch_dtype=dtype
             )
             model = prepare_model_for_kbit_training(model)
         else:
@@ -128,31 +171,16 @@ def load_model(
 
     return model, tokenizer
 
-
 def load_model_unsloth(
     model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", 
     model_path: str = None,
+    dtype: str = None,
     max_seq_length: int = 512, 
     load_in_4bit: bool = True, 
     full_finetuning: bool = False,
     for_training: bool = True
 ) -> Tuple[Any, Any]:
-    """
-    Load model using Unsloth for memory efficiency and speed
     
-    Args:
-        model_name: Name or path of the model to load
-        max_seq_length: Maximum sequence length
-        model_path: Local path to model (overrides model_name if provided)
-        load_in_4bit: Whether to use 4-bit quantization
-        for_training: Whether model will be used for training
-        
-    Returns:
-        Tuple of (model, tokenizer)
-        
-    Raises:
-        ImportError: If Unsloth is not available
-    """
     if not UNSLOTH_AVAILABLE:
         raise ImportError("Unsloth is not installed. Please install it first.")
     
@@ -165,9 +193,8 @@ def load_model_unsloth(
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_path,
         max_seq_length=max_seq_length,
-        dtype=None,  # Auto-detect optimal dtype
+        dtype=dtype,  # Auto-detect optimal dtype
         load_in_4bit=load_in_4bit,
-        trust_remote_code=True,
         full_finetuning=full_finetuning,
     )
     
@@ -185,21 +212,6 @@ def apply_lora(
     bias: str = "none",
     task_type: str = "CAUSAL_LM"
 ) -> Any:
-    """
-    Apply LoRA to a model using standard PEFT
-    
-    Args:
-        model: The model to apply LoRA to
-        rank: LoRA rank (dimensionality of adaptation)
-        alpha: LoRA alpha (scaling factor)
-        dropout: LoRA dropout rate
-        target_modules: Which modules to apply LoRA to
-        bias: LoRA bias setting
-        task_type: Type of task for PEFT
-        
-    Returns:
-        Model with LoRA applied
-    """
     if target_modules is None:
         # Default target modules for most transformer models
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -215,7 +227,6 @@ def apply_lora(
     
     return get_peft_model(model, lora_config)
 
-
 def apply_lora_unsloth(
     model: Any,
     rank: int = 16,
@@ -228,27 +239,7 @@ def apply_lora_unsloth(
     use_rslora: bool = False,
     loftq_config: Optional[Any] = None
 ) -> Any:
-    """
-    Apply LoRA using Unsloth for better optimization
     
-    Args:
-        model: The model to apply LoRA to
-        rank: LoRA rank (dimensionality of adaptation)
-        alpha: LoRA alpha (scaling factor)
-        dropout: LoRA dropout rate
-        target_modules: Which modules to apply LoRA to
-        bias: LoRA bias setting
-        use_gradient_checkpointing: Gradient checkpointing method
-        random_state: Random seed for reproducibility
-        use_rslora: Whether to use RSLoRA
-        loftq_config: LoFT-Q configuration
-        
-    Returns:
-        Model with LoRA applied using Unsloth optimization
-        
-    Raises:
-        ImportError: If Unsloth is not available
-    """
     if not UNSLOTH_AVAILABLE:
         raise ImportError("Unsloth is not installed. Please install it first.")
     

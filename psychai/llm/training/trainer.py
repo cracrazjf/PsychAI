@@ -1,19 +1,11 @@
-"""
-Generic training pipeline for language models
-
-This module provides a flexible trainer class that can work with different
-models, datasets, and training configurations.
-"""
-
-# removed unused import from re
 import torch
 import json
+import copy
 import os
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Union
 from datasets import Dataset
 
-# Optional dependencies
 try:
     from unsloth import FastLanguageModel
     from trl import SFTTrainer
@@ -24,7 +16,7 @@ except ImportError:
 from transformers import TrainingArguments, Trainer as HFTrainer
 from sklearn.metrics import accuracy_score
 
-from ..models import ModelLoader, load_model_unsloth, apply_lora, apply_lora_unsloth
+from ..models import ModelManager
 from ...config.llm_training import LLMTrainingConfig
 
 from ..utils import print_memory_usage
@@ -32,357 +24,181 @@ from ..data import train_test_split
 
 
 class Trainer:
-    """
-    Generic trainer class for language model fine-tuning
     
-    Supports various training strategies including SFT, LoRA, and Unsloth optimization.
-    Can work with any dataset format as long as it's converted to the expected format.
-    """
-    
-    def __init__(self, config: LLMTrainingConfig = None):
-        """
-        Initialize trainer with configuration
-        
-        Args:
-            config: Training configuration instance
-        """
-        self.config = config or LLMTrainingConfig()
-        self.model = None
-        self.tokenizer = None
+    def __init__(self, config):
+        self.config = config
+        self.model_manager = ModelManager()
         self.trainer = None
         
     def load_model_and_tokenizer(
-        self, 
-        model_name: Optional[str] = None,
-        model_path: Optional[str] = None,
-        use_unsloth: bool = True,
-        apply_lora: bool = True,
-        for_training: bool = True
+        self
     ) -> Tuple[Any, Any]:
-        """
-        Load model and tokenizer
-        
-        Args:
-            model_name: Model name override (uses config if None)
-            model_path: Model path override (uses config if None)
-            use_unsloth: Whether to use Unsloth optimization
-            for_training: Whether model is for training
-            
-        Returns:
-            Tuple of (model, tokenizer)
-        """
-        model_name = model_name or self.config.MODEL_NAME
-        model_path = model_path or self.config.MODEL_PATH
-        max_seq_length = self.config.MAX_LENGTH
-        load_in_4bit = self.config.LOAD_IN_4BIT
-        full_finetuning = self.config.FULL_FINETUNING
-        
+
+        model_name = self.config.MODEL_NAME
+        model_path = self.config.MODEL_PATH
+        use_unsloth = self.config.USE_UNSLOTH
+        apply_lora = self.config.APPLY_LORA
+
+        chat_template = self.config.CHAT_TEMPLATE
+        if chat_template is None:
+            chat_template = 'llama3'
+
         print(f"🚀 Loading model: {model_name} from {model_path}")
         
-        if use_unsloth and UNSLOTH_AVAILABLE:
-            model, tokenizer = load_model_unsloth(
-                model_name=model_name,
-                model_path=model_path,
-                max_seq_length=max_seq_length,
-                load_in_4bit=load_in_4bit,
-                for_training=for_training,
-                full_finetuning=full_finetuning
-            )
-            
-            # Apply LoRA if training
-            if apply_lora:
-                model = apply_lora_unsloth(
-                    model,
-                    rank=self.config.LORA_RANK,
-                    alpha=self.config.LORA_ALPHA,
-                    dropout=self.config.LORA_DROPOUT,
-                    bias=self.config.BIAS,
-                    target_modules=self.config.LORA_TARGET_MODULES,
-                    random_state=self.config.RANDOM_STATE,
-                    use_gradient_checkpointing=self.config.GRADIENT_CHECKPOINTING,
-                    use_rslora=self.config.USE_RSLORA,
-                    loftq_config=self.config.LOFTQ_CONFIG,
-                )
-        else:
-            # Use standard model loading
-            loader = ModelLoader()
-            model, tokenizer = loader.load_model(
-                model_name=model_name,
-                for_training=for_training,
-                use_unsloth=False
+        self.model_manager = ModelManager()
+        self.model_manager.load_model(
+            model_name=model_name,
+            model_path=model_path,
+            use_unsloth=use_unsloth,
+            for_training=True,
+            max_seq_length=self.config.MAX_LENGTH,
+            load_in_4bit=self.config.LOAD_IN_4BIT,
+            full_finetuning=self.config.FULL_FINETUNING,
+            dtype=self.config.DTYPE,
+        )
+        self.model_manager.apply_chat_template(chat_template)
+
+        if apply_lora:
+            self.model_manager.apply_lora(
+                use_unsloth=use_unsloth,
+                rank=self.config.RANK,
+                alpha=self.config.ALPHA,
+                dropout=self.config.DROPOUT,
+                target_modules=self.config.TARGET_MODULES,
+                bias=self.config.BIAS,
+                use_gradient_checkpointing=self.config.USE_GRADIENT_CHECKPOINTING,
+                random_state=self.config.RANDOM_STATE,
+                use_rslora=self.config.USE_RSLORA,
+                loftq_config=self.config.LOFTQ_CONFIG
             )
 
-            if apply_lora:
-                model = apply_lora(
-                    model,
-                    rank=self.config.LORA_RANK,
-                    alpha=self.config.LORA_ALPHA,
-                    dropout=self.config.LORA_DROPOUT,
-                    target_modules=self.config.LORA_TARGET_MODULES,
-                )
-
-        self.model = model
-        self.tokenizer = tokenizer
-        
-        return model, tokenizer
-    
     def prepare_datasets(
         self, 
         train_data: List[Any], 
         eval_data: Optional[List[Any]] = None,
-        validation_split: float = 0.1
+        validation_split: Optional[float] = None
     ) -> Tuple[Dataset, Dataset]:
-        """
-        Prepare datasets for training
-        
-        Args:
-            train_data: Training data in chat format
-            eval_data: Evaluation data (optional)
-            validation_split: Fraction of training data to use for validation
-            
-        Returns:
-            Tuple of (train_dataset, eval_dataset)
-        """
-        if eval_data is None:
-            # Split training data
+
+        data_type = self.config.DATA_TYPE
+        ESO_TOKEN = self.model_manager.tokenizer.eos_token
+
+        if eval_data is None and validation_split is not None:
+            print("No evaluation data provided. Splitting training data into train and eval.")
             train_data, eval_data = train_test_split(
                 train_data, 
                 test_size=validation_split, 
                 random_state=self.config.RANDOM_STATE
             )
-        
-        # Convert to Unsloth format
-        train_texts = []
-        for i, sample in enumerate(train_data):
-            try:
-                formatted = self._convert_to_unsloth_format(sample)
-                train_texts.append(formatted)
-                
-                if i < 3:  # Show first few samples
-                    print(f"📝 Sample {i}:")
-                    print(f"  Text length: {len(formatted['text'])}")
-                    
-            except Exception as e:
-                print(f"⚠️ Skipping training sample {i}: {e}")
-                continue
-        
-        eval_texts = []
-        for i, sample in enumerate(eval_data):
-            try:
-                formatted = self._convert_to_unsloth_format(sample)
-                eval_texts.append(formatted)
-            except Exception as e:
-                print(f"⚠️ Skipping eval sample {i}: {e}")
-                continue
-        
-        train_dataset = Dataset.from_list(train_texts)
-        eval_dataset = Dataset.from_list(eval_texts)
-        
-        print(f"📊 Prepared datasets: {len(train_dataset)} train, {len(eval_dataset)} eval")
-        
-        return train_dataset, eval_dataset
-    
-    def _convert_to_unsloth_format(self, data_sample: Any) -> Dict[str, str]:
-        """
-        Convert data sample to Unsloth format
-        
-        Args:
-            data_sample: Input data sample (chat format, dict, or string)
-            
-        Returns:
-            Dictionary with 'text' key containing formatted text
-        """
-        if isinstance(data_sample, list):
-            # Chat format - apply chat template
-            chat_data = data_sample
-            
-            # Smart truncation for long inputs
-            for message in chat_data:
-                try:
-                    if message["role"] == "user":
-                        user_content = message["content"].split("\n\n")[0]
-                        if len(message["content"].split("\n\n")) > 1:
-                            after_user_content = message["content"].split("\n\n")[1]
-                        else:
-                            after_user_content = ""
-                        # Estimate token usage
-                        system_msgs = [m for m in chat_data if m["role"] == "system"]
-                        assistant_msgs = [m for m in chat_data if m["role"] == "assistant"]
-                except:
-                    raise ValueError(f"Failed to truncate user message: {e}")
-                
-                system_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in system_msgs)
-                assistant_tokens = sum(len(self.tokenizer.encode(m["content"], add_special_tokens=False)) for m in assistant_msgs)
-                after_user_tokens = len(self.tokenizer.encode(after_user_content, add_special_tokens=False))
-                special_tokens_estimate = 50
-                
-                reserved_tokens = system_tokens + assistant_tokens + special_tokens_estimate + after_user_tokens
-                available_for_user = self.config.MAX_LENGTH - reserved_tokens
-                
-                # Truncate if necessary
-                user_tokens = self.tokenizer.encode(user_content, add_special_tokens=False)
-                if len(user_tokens) > available_for_user:
-                    truncated_user_tokens = user_tokens[:available_for_user]
-                    truncated_user_content = self.tokenizer.decode(truncated_user_tokens, skip_special_tokens=True)
-                    message["content"] = truncated_user_content + "\n\n" + after_user_content if after_user_content.strip() else truncated_user_content
-            
-            # Apply chat template
-            try:
-                if hasattr(self.tokenizer, 'chat_template') and self.tokenizer.chat_template:
-                    if self.config.MODEL_TYPE == 'gpt-oss':
-                        formatted_text = self.tokenizer.apply_chat_template(
-                            chat_data, 
-                            tokenize=False,
-                            add_generation_prompt=False,
-                            reasoning_effort=self.config.REASONING_EFFORT
-                        )
-                    else:
-                        formatted_text = self.tokenizer.apply_chat_template(
-                            chat_data, 
-                            tokenize=False,
-                            add_generation_prompt=False
-                        )
-                else:
-                    if self.config.MODEL_TYPE == "llama":
-                        formatted_text = self._format_llama_chat_manual(chat_data)
-                    else:
-                        raise ValueError(f"No chat template found for {self.config.MODEL_TYPE}")
-            except Exception as e:
-                raise ValueError(f"Failed to format chat data: {e}")
-                
-        elif isinstance(data_sample, dict):
-            if 'text' in data_sample:
-                formatted_text = data_sample['text']
-            elif 'input' in data_sample and 'output' in data_sample:
-                # Convert to chat format
-                chat_data = [
-                    {"role": "user", "content": data_sample['input']},
-                    {"role": "assistant", "content": data_sample['output']}
-                ]
-                if self.config.MODEL_TYPE == "gpt-oss":
-                    formatted_text = self.tokenizer.apply_chat_template(
-                        chat_data, tokenize=False, add_generation_prompt=False, reasoning_effort=self.config.REASONING_EFFORT
-                    )
-                else:
-                    formatted_text = self.tokenizer.apply_chat_template(
-                        chat_data, tokenize=False, add_generation_prompt=False
-                    )
-            else:
-                formatted_text = str(data_sample)
-                
-        elif isinstance(data_sample, str):
-            formatted_text = data_sample
+            print(f"✅ Split training data into train and eval: {len(train_data)} train, {len(eval_data)} eval")
+
+        if not isinstance(train_data[0], dict):
+            raise ValueError("train_data must be a list of dictionaries with key 'messages'")
+
+        train_dataset = Dataset.from_list(train_data)
+        if data_type == "chat":
+            train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
+        elif data_type == "instruction":
+            prompt_template = self.config.PROMPT_TEMPLATE
+            train_dataset = train_dataset.map(self._format_instruction_prompt, 
+                                              fn_kwargs={"prompt_template": prompt_template, 
+                                              "ESO_TOKEN": ESO_TOKEN}, batched=True)
         else:
-            formatted_text = str(data_sample)
+            raise ValueError("Invalid data type")
         
-        # Final length check
-        tokens = self.tokenizer.encode(formatted_text, add_special_tokens=False)
-        if len(tokens) > self.config.MAX_LENGTH - 5:
-            truncated_tokens = tokens[:self.config.MAX_LENGTH - 5]
-            formatted_text = self.tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+        print("printing examples of training data:")
+        for i in range (3):
+            print(f"Example {i}: {train_data[i]['text']}")
+            print("--------------------------------")
+
+        if eval_data is not None:
+            eval_dataset = Dataset.from_list(eval_data)
+            if data_type == "chat":
+                eval_dataset = eval_dataset.map(self._format_chat_prompt, batched=True)
+            elif data_type == "instruction":
+                eval_dataset = eval_dataset.map(self._format_instruction_prompt, 
+                                                fn_kwargs={"prompt_template": prompt_template, 
+                                                "ESO_TOKEN": ESO_TOKEN}, batched=True)
+            else:
+                raise ValueError("Invalid data type")
+
+        return train_dataset, eval_dataset
+
+    def _format_chat_prompt(self, examples):
+        reasoning_effort = self.config.REASONING_EFFORT
+        convos = examples['messages']
+        texts = [self.model_manager.tokenizer.apply_chat_template(convo, tokenize = False, add_generation_prompt = False, reasoning_effort = reasoning_effort) for convo in convos]
         
-        return {"text": formatted_text}
-    
-    def _format_llama_chat_manual(self, chat_data: List[Dict]) -> str:
-        """Manual Llama chat formatting as fallback"""
-        formatted_parts = ["<|begin_of_text|>"]
+        return { "text" : texts}
+
+    def _format_instruction_prompt(self, examples, prompt_template, ESO_TOKEN):
+        instructions = examples["instruction"]
+        inputs       = examples["input"]
+        outputs      = examples["output"]
+        texts = []
+        for instruction, input, output in zip(instructions, inputs, outputs):
+            text = prompt_template.format(instruction, input, output) + ESO_TOKEN
+            texts.append(text)
+        return { "text" : texts}
+
+    def create_training_arguments(self) -> TrainingArguments:
         
-        for message in chat_data:
-            role = message["role"]
-            content = message["content"]
-            formatted_parts.extend([
-                f"<|start_header_id|>{role}<|end_header_id|>",
-                f"\n\n{content}<|eot_id|>"
-            ])
-        
-        return "".join(formatted_parts)
-    
-    def create_training_arguments(self, output_dir: Optional[str] = None) -> TrainingArguments:
-        """
-        Create training arguments from configuration
-        
-        Args:
-            output_dir: Override output directory
-            
-        Returns:
-            TrainingArguments instance
-        """
-        output_dir = output_dir or self.config.OUTPUT_DIR
-        
-        return TrainingArguments(
-            output_dir=output_dir,
-            per_device_train_batch_size=self.config.BATCH_SIZE,
-            gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
-            warmup_steps=self.config.WARMUP_STEPS,
-            max_steps=self.config.MAX_STEPS,
-            # num_train_epochs=self.config.NUM_EPOCHS,
-            learning_rate=self.config.LEARNING_RATE,
-            fp16=not torch.cuda.is_bf16_supported(),
-            bf16=torch.cuda.is_bf16_supported(),
-            logging_steps=self.config.LOGGING_STEPS,
-            optim=self.config.OPTIMIZER,
-            weight_decay=self.config.WEIGHT_DECAY,
-            lr_scheduler_type=self.config.LR_SCHEDULER,
-            seed=self.config.RANDOM_STATE,
-            save_steps=self.config.SAVE_STEPS,
-            save_total_limit=self.config.SAVE_TOTAL_LIMIT,
-            eval_steps=self.config.EVAL_STEPS,
-            eval_strategy=self.config.EVAL_STRATEGY,
-            logging_dir=self.config.LOGS_DIR,
-            report_to="tensorboard",
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,
-        )
+        return TrainingArguments(output_dir=self.config.OUTPUT_DIR,
+                                per_device_train_batch_size=self.config.BATCH_SIZE,
+                                gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
+                                warmup_steps=self.config.WARMUP_STEPS,
+                                max_steps=self.config.MAX_STEPS,
+                                learning_rate=self.config.LEARNING_RATE,
+                                logging_steps=self.config.LOGGING_STEPS,
+                                optim=self.config.OPTIMIZER,
+                                weight_decay=self.config.WEIGHT_DECAY,
+                                lr_scheduler_type=self.config.LR_SCHEDULER,
+                                seed=self.config.RANDOM_STATE,
+                                save_steps=self.config.SAVE_STEPS,
+                                save_total_limit=self.config.SAVE_TOTAL_LIMIT,
+                                eval_steps=self.config.EVAL_STEPS,
+                                eval_strategy=self.config.EVAL_STRATEGY,
+                                logging_dir=self.config.LOGS_DIR,
+                                report_to="none",
+                                load_best_model_at_end=True,
+                                metric_for_best_model="eval_loss",
+                                greater_is_better=False,
+                                )
     
     def train(
         self, 
         train_data: List[Any], 
         eval_data: Optional[List[Any]] = None,
-        output_dir: Optional[str] = None
     ) -> Any:
-        """
-        Train the model
-        
-        Args:
-            train_data: Training data
-            eval_data: Evaluation data (optional)
-            output_dir: Output directory override
-            
-        Returns:
-            Trained model
-        """
+    
         print("🏋️ Starting training...")
         
-        # Load model if not already loaded
-        if self.model is None or self.tokenizer is None:
+        if self.model_manager.model is None or self.model_manager.tokenizer is None:
             self.load_model_and_tokenizer()
         
-        # Prepare datasets
         train_dataset, eval_dataset = self.prepare_datasets(train_data, eval_data)
         
         # Create training arguments
-        training_args = self.create_training_arguments(output_dir)
+        self.training_args = self.create_training_arguments()
         
         # Create trainer
         if UNSLOTH_AVAILABLE:
             trainer = SFTTrainer(
-                model=self.model,
-                tokenizer=self.tokenizer,
+                model=self.model_manager.model,
+                tokenizer=self.model_manager.tokenizer,
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
-                dataset_text_field="text",
-                max_seq_length=self.config.MAX_LENGTH,
-                args=training_args,
+                dataset_text_field = "text",
+                packing = self.config.PACKING,
+                args=self.training_args,
             )
         else:
             # Use standard HuggingFace trainer
             trainer = HFTrainer(
-                model=self.model,
-                tokenizer=self.tokenizer,
+                model=self.model_manager.model,
+                tokenizer=self.model_manager.tokenizer,
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
-                args=training_args,
+                args=self.training_args,
             )
         
         self.trainer = trainer
@@ -392,74 +208,22 @@ class Trainer:
         
         # Save model
         print("💾 Saving model...")
-        trainer.save_model()
-        finetuned_model_name = f"{self.config.MODEL_NAME}_{self.config.DATA_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self.tokenizer.save_pretrained(os.path.join(self.config.OUTPUT_DIR, finetuned_model_name))
-        
-        if hasattr(self.model, 'save_pretrained_merged') and self.config.SAVE_MODEL:
-            # Save merged model for Unsloth
-            merged_dir = os.path.join(self.config.MODELS_PATH, f"merged_{finetuned_model_name}")
-            self.model.save_pretrained_merged(merged_dir, self.tokenizer, save_method="merged_16bit")
-            print(f"✅ Merged model saved to: {merged_dir}")
-        
+        self.save_model()
         print("✅ Training completed!")
         
         return self.model
     
-    def save_model(self, output_dir: str):
-        """
-        Save the trained model
-        
-        Args:
-            output_dir: Directory to save the model
-        """
+    def save_model(self):
         if self.trainer is None:
             raise ValueError("No trainer available. Train the model first.")
-        
-        self.trainer.save_model(output_dir)
-        print(f"💾 Model saved to: {output_dir}")
-
-
-def create_compute_metrics_function(tokenizer):
-    """
-    Create a simple compute_metrics function for training
-    
-    Args:
-        tokenizer: Model tokenizer
-        
-    Returns:
-        Compute metrics function
-    """
-    def compute_metrics(eval_preds):
-        """Simple metrics computation for language model training"""
-        predictions, labels = eval_preds
-        
-        if isinstance(predictions, tuple):
-            predictions = predictions[0]
-        
-        try:
-            # Token-level accuracy
-            predictions = predictions.reshape(-1, predictions.shape[-1])
-            labels = labels.reshape(-1)
-            
-            predicted_tokens = predictions.argmax(axis=-1)
-            valid_mask = labels != -100
-            
-            if valid_mask.sum() > 0:
-                token_accuracy = (predicted_tokens[valid_mask] == labels[valid_mask]).mean()
-                
-                return {
-                    "eval_token_accuracy": float(token_accuracy),
-                    "eval_valid_tokens": int(valid_mask.sum())
-                }
-            else:
-                return {
-                    "eval_token_accuracy": 0.0,
-                    "eval_valid_tokens": 0
-                }
-                
-        except Exception as e:
-            print(f"Error in compute_metrics: {e}")
-            return {"eval_token_accuracy": 0.0, "eval_error": 1.0}
-    
-    return compute_metrics
+        saved_model_name = f"{self.model_manager.model_name}_{self.config.DATA_NAME}_{self.training_args.learning_rate}"
+        if self.config.SAVE_MODEL:
+            save_path = os.path.join(self.config.MODELS_PATH, f"merged_{saved_model_name}")
+            save_method = self.config.SAVE_METHOD
+            self.model_manager.model.save_pretrained_merged(save_path, self.model_manager.tokenizer, save_method = save_method)
+            print(f"💾 Merged model saved to: {save_path}")
+        else:
+            save_path = os.path.join(self.config.MODELS_PATH, f"lora_{saved_model_name}")
+            self.model_manager.tokenizer.save_pretrained(save_path)
+            self.model_manager.model.save_pretrained(save_path)
+            print(f"💾 Lora model saved to: {save_path}")

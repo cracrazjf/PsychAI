@@ -7,12 +7,12 @@ This module provides utilities for:
 - Model configuration and setup
 """
 
-from .llm_loader import ModelLoader, load_model, load_model_unsloth, apply_lora, apply_lora_unsloth
+from .llm_loader import ModelManager, load_model, load_model_unsloth, apply_lora, apply_lora_unsloth,
 
 __all__ = [
-    "ModelLoader",
+    "ModelManager",
     "load_model",
-    "load_model_unsloth", 
+    "load_model_unsloth",
     "apply_lora",
     "apply_lora_unsloth",
 ]
