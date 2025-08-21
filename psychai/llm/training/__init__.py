@@ -8,9 +8,8 @@ This module provides:
 - Training metrics and monitoring
 """
 
-from .trainer import Trainer, create_compute_metrics_function
+from .trainer import Trainer
 
 __all__ = [
     "Trainer",
-    "create_compute_metrics_function"
 ]

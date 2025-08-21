@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from datasets import Dataset
 
 try:
-    from trl import SFTTrainer
+    from trl import SFTTrainer, SFTConfig
     UNSLOTH_AVAILABLE = True
 except ImportError:
     UNSLOTH_AVAILABLE = False
@@ -137,8 +137,32 @@ class Trainer:
         return { "text" : texts}
 
     def create_training_arguments(self) -> TrainingArguments:
-        
-        return TrainingArguments(output_dir=self.config.OUTPUT_DIR,
+        if UNSLOTH_AVAILABLE:
+            return SFTConfig(
+                per_device_train_batch_size=self.config.BATCH_SIZE,
+                gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
+                warmup_steps=self.config.WARMUP_STEPS,
+                #num_train_epochs=self.config.NUM_EPOCHS,
+                max_steps=self.config.MAX_STEPS,
+                learning_rate=self.config.LEARNING_RATE,
+                logging_steps=self.config.LOGGING_STEPS,
+                optim=self.config.OPTIMIZER,
+                weight_decay=self.config.WEIGHT_DECAY,
+                lr_scheduler_type=self.config.LR_SCHEDULER,
+                seed=self.config.RANDOM_STATE,
+                output_dir=self.config.OUTPUT_DIR,
+                report_to=self.config.REPORT_TO,
+                eval_strategy=self.config.EVAL_STRATEGY,
+                eval_steps=self.config.EVAL_STEPS,
+                logging_dir=self.config.LOGGING_DIR,
+                load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
+                metric_for_best_model=self.config.METRIC_FOR_BEST_MODEL,  
+                save_steps=self.config.SAVE_STEPS,
+                save_total_limit=self.config.SAVE_TOTAL_LIMIT,
+                greater_is_better=self.config.GREATER_IS_BETTER,
+            )
+        else:
+            return TrainingArguments(output_dir=self.config.OUTPUT_DIR,
                                 per_device_train_batch_size=self.config.BATCH_SIZE,
                                 gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
                                 warmup_steps=self.config.WARMUP_STEPS,
@@ -153,11 +177,11 @@ class Trainer:
                                 save_total_limit=self.config.SAVE_TOTAL_LIMIT,
                                 eval_steps=self.config.EVAL_STEPS,
                                 eval_strategy=self.config.EVAL_STRATEGY,
-                                logging_dir=self.config.LOGS_DIR,
-                                report_to="none",
-                                load_best_model_at_end=True,
-                                metric_for_best_model="eval_loss",
-                                greater_is_better=False,
+                                logging_dir=self.config.LOGGING_DIR,
+                                report_to=self.config.REPORT_TO,
+                                load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
+                                metric_for_best_model=self.config.METRIC_FOR_BEST_MODEL,
+                                greater_is_better=self.config.GREATER_IS_BETTER,
                                 )
     
     def train(
@@ -185,7 +209,8 @@ class Trainer:
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
                 dataset_text_field = "text",
-                packing = self.config.PACKING,
+                max_seq_length = self.config.MAX_SEQ_LENGTH,
+                packing = False,
                 args=self.training_args,
             )
         else:
