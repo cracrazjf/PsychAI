@@ -28,6 +28,7 @@ class TrainingConfig:
     # Model
     USE_UNSLOTH = os.getenv("USE_UNSLOTH", True)
     MODEL_NAME = os.getenv("MODEL_NAME", None)
+    CHAT_TEMPLATE = os.getenv("CHAT_TEMPLATE", None)
     FULL_FINETUNING = os.getenv("FULL_FINETUNING", False)
     LOAD_IN_4BIT = os.getenv("LOAD_IN_4BIT", True)
     DTYPE = os.getenv("DTYPE", None)

@@ -27,8 +27,6 @@ class Trainer:
         apply_lora = self.config.APPLY_LORA
 
         chat_template = self.config.CHAT_TEMPLATE
-        if chat_template is None:
-            chat_template = 'llama3'
 
         print(f"🚀 Loading model: {model_name} from {model_path}")
         
@@ -43,7 +41,9 @@ class Trainer:
             full_finetuning=self.config.FULL_FINETUNING,
             dtype=self.config.DTYPE,
         )
-        self.model_manager.apply_chat_template(chat_template)
+
+        if chat_template is not None:
+            self.model_manager.apply_chat_template(chat_template)
 
         if apply_lora:
             self.model_manager.apply_lora(
