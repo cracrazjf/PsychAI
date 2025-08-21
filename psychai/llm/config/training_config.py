@@ -35,6 +35,7 @@ class TrainingConfig:
     REASONING_EFFORT = os.getenv("REASONING_EFFORT", None) # only for gpt-oss
 
     # LoRA
+    APPLY_LORA = os.getenv("APPLY_LORA", True)
     LORA_RANK = int(os.getenv("LORA_RANK", 8))
     LORA_ALPHA = int(os.getenv("LORA_ALPHA", 16))
     LORA_DROPOUT = float(os.getenv("LORA_DROPOUT", 0.05))
