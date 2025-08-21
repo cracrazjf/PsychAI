@@ -19,6 +19,7 @@ class TrainingConfig:
 
     # Data
     DATA_NAME = os.getenv("DATA_NAME", None)
+    DATA_TYPE = os.getenv("DATA_TYPE", None)
     TRAIN_DATA_PATH = os.getenv("TRAIN_DATA_PATH", None)
     EVAL_DATA_PATH = os.getenv("EVAL_DATA_PATH", None)
 

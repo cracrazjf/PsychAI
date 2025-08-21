@@ -4,7 +4,7 @@ import copy
 import os
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Union
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from ..models import ModelManager
 from trl import SFTTrainer, SFTConfig
 from transformers import TrainingArguments, Trainer as HFTrainer
@@ -60,19 +60,22 @@ class Trainer:
             )
 
     def prepare_datasets(
-        self, 
-        train_data: List[Any], 
-        eval_data: Optional[List[Any]] = None,
+        self,
         prompt_template: Optional[str] = None,
     ) -> Tuple[Dataset, Dataset]:   
+
+        train_dataset = load_dataset("json", data_files=self.config.TRAIN_DATA_PATH, split="train")
+        if self.config.EVAL_DATA_PATH is not None:
+            eval_dataset = load_dataset("json", data_files=self.config.EVAL_DATA_PATH, split="train")
+        else:
+            eval_dataset = None
 
         data_type = self.config.DATA_TYPE
         ESO_TOKEN = self.model_manager.tokenizer.eos_token
 
-        if not isinstance(train_data[0], dict):
+        if not isinstance(train_dataset[0], dict):
             raise ValueError("train_data must be a list of dictionaries")
 
-        train_dataset = Dataset.from_list(train_data)
         if data_type == "chat":
             train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
         elif data_type == "instruction":
@@ -84,11 +87,10 @@ class Trainer:
         
         print("printing examples of training data:")
         for i in range (3):
-            print(f"Example {i}: {train_data[i]['text']}")
+            print(f"Example {i}: {train_dataset[i]['text']}")
             print("--------------------------------")
 
-        if eval_data is not None:
-            eval_dataset = Dataset.from_list(eval_data)
+        if eval_dataset is not None:
             if data_type == "chat":
                 eval_dataset = eval_dataset.map(self._format_chat_prompt, batched=True)
             elif data_type == "instruction":
@@ -179,8 +181,6 @@ class Trainer:
     
     def train(
         self, 
-        train_data: List[Any], 
-        eval_data: Optional[List[Any]] = None,
         prompt_template: Optional[str] = None,
     ) -> Any:
     
@@ -189,7 +189,7 @@ class Trainer:
         if self.model_manager.model is None or self.model_manager.tokenizer is None:
             self.load_model_and_tokenizer()
         
-        train_dataset, eval_dataset = self.prepare_datasets(train_data, eval_data, prompt_template)
+        train_dataset, eval_dataset = self.prepare_datasets(prompt_template)
         
         # Create training arguments
         self.training_args = self.create_training_arguments()
