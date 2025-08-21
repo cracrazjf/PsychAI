@@ -78,7 +78,6 @@ class Trainer:
             raise ValueError("train_data must be a list of dictionaries")
 
         if data_type == "chat":
-            train_dataset = standardize_sharegpt(train_dataset)
             train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
         elif data_type == "instruction":
             train_dataset = train_dataset.map(self._format_instruction_prompt, 
@@ -106,6 +105,8 @@ class Trainer:
 
     def _format_chat_prompt(self, examples):
         reasoning_effort = self.config.REASONING_EFFORT
+        if reasoning_effort is None:
+            reasoning_effort = "low"
         convos = examples['messages']
         texts = [self.model_manager.tokenizer.apply_chat_template(convo, tokenize = False, add_generation_prompt = False, reasoning_effort = reasoning_effort) for convo in convos]
         
