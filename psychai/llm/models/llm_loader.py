@@ -40,6 +40,7 @@ class ModelManager:
                 dtype=dtype,
                 for_training=for_training
             )
+            print("using unsloth")
         else:
             self.model, self.tokenizer = load_model(
                 model_name=model_name,

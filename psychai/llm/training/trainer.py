@@ -132,6 +132,7 @@ class Trainer:
         return { "text" : texts}
 
     def create_training_arguments(self):
+        print(self.config.USE_UNSLOTH)
         if self.config.USE_UNSLOTH:
             print("using trl")
             return SFTConfig(
