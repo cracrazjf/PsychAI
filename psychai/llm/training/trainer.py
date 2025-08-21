@@ -5,16 +5,9 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Union
 from datasets import Dataset
-
-try:
-    from trl import SFTTrainer, SFTConfig
-    UNSLOTH_AVAILABLE = True
-except ImportError:
-    UNSLOTH_AVAILABLE = False
-
-from transformers import TrainingArguments, Trainer as HFTrainer
-
 from ..models import ModelManager
+from trl import SFTTrainer, SFTConfig
+from transformers import TrainingArguments, Trainer as HFTrainer
 from ..data import split_data
 
 class Trainer:
@@ -137,7 +130,7 @@ class Trainer:
         return { "text" : texts}
 
     def create_training_arguments(self) -> TrainingArguments:
-        if UNSLOTH_AVAILABLE:
+        if self.config.USE_UNSLOTH:
             return SFTConfig(
                 per_device_train_batch_size=self.config.BATCH_SIZE,
                 gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,

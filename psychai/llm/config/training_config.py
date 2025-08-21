@@ -26,6 +26,7 @@ class TrainingConfig:
     RANDOM_STATE = int(os.getenv("RANDOM_STATE", "66"))
 
     # Model
+    USE_UNSLOTH = os.getenv("USE_UNSLOTH", True)
     MODEL_NAME = os.getenv("MODEL_NAME", None)
     FULL_FINETUNING = os.getenv("FULL_FINETUNING", False)
     LOAD_IN_4BIT = os.getenv("LOAD_IN_4BIT", True)
