@@ -131,7 +131,7 @@ class Trainer:
             texts.append(text)
         return { "text" : texts}
 
-    def create_training_arguments(self) -> TrainingArguments:
+    def create_training_arguments(self):
         if self.config.USE_UNSLOTH:
             return SFTConfig(
                 dataset_text_field = "text",
@@ -150,6 +150,7 @@ class Trainer:
                 seed=self.config.RANDOM_STATE,
                 output_dir=self.config.OUTPUT_DIR,
                 report_to=self.config.REPORT_TO,
+                save_strategy=self.config.SAVE_STRATEGY,
                 eval_strategy=self.config.EVAL_STRATEGY,
                 eval_steps=self.config.EVAL_STEPS,
                 logging_dir=self.config.LOGGING_DIR,

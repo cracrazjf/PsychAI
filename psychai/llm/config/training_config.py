@@ -64,9 +64,10 @@ class TrainingConfig:
     LR_SCHEDULER = os.getenv("LR_SCHEDULER", None)
 
     # Evaluation / Saving / Logging
-    EVAL_STRATEGY = "steps"
+    EVAL_STRATEGY = os.getenv("EVAL_STRATEGY", "steps")
     EVAL_STEPS = int(os.getenv("EVAL_STEPS", 100))
     SAVE_MODEL = os.getenv("SAVE_MODEL", None)
+    SAVE_STRATEGY = os.getenv("SAVE_STRATEGY", "steps")
     SAVE_STEPS = int(os.getenv("SAVE_STEPS", 100))
     SAVE_TOTAL_LIMIT = int(os.getenv("SAVE_TOTAL_LIMIT", 100))
     LOGGING_STEPS = int(os.getenv("LOGGING_STEPS", 100))
