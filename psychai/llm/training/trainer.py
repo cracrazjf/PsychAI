@@ -134,8 +134,8 @@ class Trainer:
     def create_training_arguments(self) -> TrainingArguments:
         if self.config.USE_UNSLOTH:
             return SFTConfig(
-                per_device_train_batch_size=self.config.BATCH_SIZE,
-                gradient_accumulation_steps=self.config.GRAD_ACCUM_STEPS,
+                per_device_train_batch_size=self.config.PER_DEVICE_TRAIN_BATCH_SIZE,
+                gradient_accumulation_steps=self.config.GRADIENT_ACCUMULATION_STEPS,
                 warmup_steps=self.config.WARMUP_STEPS,
                 #num_train_epochs=self.config.NUM_EPOCHS,
                 max_steps=self.config.MAX_STEPS,
@@ -195,7 +195,7 @@ class Trainer:
         self.training_args = self.create_training_arguments()
         
         # Create trainer
-        if UNSLOTH_AVAILABLE:
+        if self.config.USE_UNSLOTH:
             trainer = SFTTrainer(
                 model=self.model_manager.model,
                 tokenizer=self.model_manager.tokenizer,
