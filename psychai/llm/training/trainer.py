@@ -7,21 +7,15 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from datasets import Dataset
 
 try:
-    from unsloth import FastLanguageModel
     from trl import SFTTrainer
     UNSLOTH_AVAILABLE = True
 except ImportError:
     UNSLOTH_AVAILABLE = False
 
 from transformers import TrainingArguments, Trainer as HFTrainer
-from sklearn.metrics import accuracy_score
 
 from ..models import ModelManager
-from ...config.llm_training import LLMTrainingConfig
-
-from ..utils import print_memory_usage
-from ..data import train_test_split
-
+from ..data import split_data
 
 class Trainer:
     
@@ -76,29 +70,19 @@ class Trainer:
         self, 
         train_data: List[Any], 
         eval_data: Optional[List[Any]] = None,
-        validation_split: Optional[float] = None
-    ) -> Tuple[Dataset, Dataset]:
+        prompt_template: Optional[str] = None,
+    ) -> Tuple[Dataset, Dataset]:   
 
         data_type = self.config.DATA_TYPE
         ESO_TOKEN = self.model_manager.tokenizer.eos_token
 
-        if eval_data is None and validation_split is not None:
-            print("No evaluation data provided. Splitting training data into train and eval.")
-            train_data, eval_data = train_test_split(
-                train_data, 
-                test_size=validation_split, 
-                random_state=self.config.RANDOM_STATE
-            )
-            print(f"✅ Split training data into train and eval: {len(train_data)} train, {len(eval_data)} eval")
-
         if not isinstance(train_data[0], dict):
-            raise ValueError("train_data must be a list of dictionaries with key 'messages'")
+            raise ValueError("train_data must be a list of dictionaries")
 
         train_dataset = Dataset.from_list(train_data)
         if data_type == "chat":
             train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
         elif data_type == "instruction":
-            prompt_template = self.config.PROMPT_TEMPLATE
             train_dataset = train_dataset.map(self._format_instruction_prompt, 
                                               fn_kwargs={"prompt_template": prompt_template, 
                                               "ESO_TOKEN": ESO_TOKEN}, batched=True)
@@ -131,6 +115,18 @@ class Trainer:
         return { "text" : texts}
 
     def _format_instruction_prompt(self, examples, prompt_template, ESO_TOKEN):
+        if prompt_template is None:
+            prompt_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
+            
+            ### Instruction:
+            {}
+            
+            ### Input:
+            {}
+            
+            ### Response:
+            {}"""
+            
         instructions = examples["instruction"]
         inputs       = examples["input"]
         outputs      = examples["output"]
@@ -168,6 +164,7 @@ class Trainer:
         self, 
         train_data: List[Any], 
         eval_data: Optional[List[Any]] = None,
+        prompt_template: Optional[str] = None,
     ) -> Any:
     
         print("🏋️ Starting training...")
@@ -175,7 +172,7 @@ class Trainer:
         if self.model_manager.model is None or self.model_manager.tokenizer is None:
             self.load_model_and_tokenizer()
         
-        train_dataset, eval_dataset = self.prepare_datasets(train_data, eval_data)
+        train_dataset, eval_dataset = self.prepare_datasets(train_data, eval_data, prompt_template)
         
         # Create training arguments
         self.training_args = self.create_training_arguments()

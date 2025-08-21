@@ -244,8 +244,8 @@ def read_childes(source: str, *, participant: str = "CHI", by_utterance: bool = 
 
 def train_test_split(
     records: Iterator[Record],
-    train_path: str,
-    test_path: str,
+    train_path: Optional[str] = None,
+    test_path: Optional[str] = None,
     test_ratio: float = 0.2,
     id_key: str = "id"
 ):
@@ -259,13 +259,10 @@ def train_test_split(
         test_ratio: Proportion of records to put in test set.
         id_key: Key in record used as stable identifier (defaults to "id").
     """
-    with open(train_path, "w", encoding="utf-8") as f_train, \
-         open(test_path, "w", encoding="utf-8") as f_test:
-
-        train_records = []
-        test_records = []
+    train_records = []
+    test_records = []
+    if train_path is None and test_path is None:
         for rec in records:
-            # pick something stable to hash
             sid = str(rec.get(id_key, json.dumps(rec, sort_keys=True)))
 
             # hash → float between 0 and 1
@@ -274,13 +271,33 @@ def train_test_split(
 
             if p < test_ratio:
                 test_records.append(rec)
-                f_test.write(json.dumps(rec, ensure_ascii=False) + "\n")
             else:
                 train_records.append(rec)
-                f_train.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        
+        return train_records, test_records
+    else:
+        with open(train_path, "w", encoding="utf-8") as f_train, \
+            open(test_path, "w", encoding="utf-8") as f_test:
 
-    print(f"✅ Wrote {len(train_records)} train records to {train_path}, {len(test_records)} test records to {test_path}")
-    return train_records, test_records
+            train_records = []
+            test_records = []
+            for rec in records:
+                # pick something stable to hash
+                sid = str(rec.get(id_key, json.dumps(rec, sort_keys=True)))
+
+                # hash → float between 0 and 1
+                h = hashlib.md5(sid.encode("utf-8")).hexdigest()
+                p = int(h, 16) / 16**32  
+
+                if p < test_ratio:
+                    test_records.append(rec)
+                    f_test.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                else:
+                    train_records.append(rec)
+                    f_train.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+        print(f"✅ Wrote {len(train_records)} train records to {train_path}, {len(test_records)} test records to {test_path}")
+        return train_records, test_records
 
 def create_dataloader_hf(config: TrainingConfig, 
                         *,
