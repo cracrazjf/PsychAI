@@ -85,8 +85,7 @@ class ModelManager:
                 alpha=alpha,
                 dropout=dropout,
                 target_modules=target_modules,
-                bias=bias,
-                task_type=task_type
+                bias=bias
             )
 
     def free_memory(self) -> None:
