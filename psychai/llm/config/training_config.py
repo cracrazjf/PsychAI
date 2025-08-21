@@ -45,7 +45,7 @@ class TrainingConfig:
         "gate_proj", "up_proj", "down_proj",      # MLP layers
     ]
     BIAS = os.getenv("BIAS", "none")
-    GRADIENT_CHECKPOINTING = os.getenv("GRADIENT_CHECKPOINTING", "unsloth")
+    USE_GRADIENT_CHECKPOINTING = os.getenv("USE_GRADIENT_CHECKPOINTING", "unsloth")
     USE_RSLORA = os.getenv("USE_RSLORA", False)
     LOFTQ_CONFIG = os.getenv("LOFTQ_CONFIG", None)
     

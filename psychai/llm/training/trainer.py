@@ -36,7 +36,7 @@ class Trainer:
             model_path=model_path,
             use_unsloth=use_unsloth,
             for_training=True,
-            max_seq_length=self.config.MAX_LENGTH,
+            max_seq_length=self.config.MAX_SEQ_LENGTH,
             load_in_4bit=self.config.LOAD_IN_4BIT,
             full_finetuning=self.config.FULL_FINETUNING,
             dtype=self.config.DTYPE,
@@ -48,10 +48,10 @@ class Trainer:
         if apply_lora:
             self.model_manager.apply_lora(
                 use_unsloth=use_unsloth,
-                rank=self.config.RANK,
+                rank=self.config.LORA_RANK,
                 alpha=self.config.ALPHA,
-                dropout=self.config.DROPOUT,
-                target_modules=self.config.TARGET_MODULES,
+                dropout=self.config.LORA_DROPOUT,
+                target_modules=self.config.LORA_TARGET_MODULES,
                 bias=self.config.BIAS,
                 use_gradient_checkpointing=self.config.USE_GRADIENT_CHECKPOINTING,
                 random_state=self.config.RANDOM_STATE,
