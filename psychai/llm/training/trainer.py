@@ -134,6 +134,9 @@ class Trainer:
     def create_training_arguments(self) -> TrainingArguments:
         if self.config.USE_UNSLOTH:
             return SFTConfig(
+                dataset_text_field = "text",
+                max_length=self.config.MAX_SEQ_LENGTH,
+                packing=False,
                 per_device_train_batch_size=self.config.PER_DEVICE_TRAIN_BATCH_SIZE,
                 gradient_accumulation_steps=self.config.GRADIENT_ACCUMULATION_STEPS,
                 warmup_steps=self.config.WARMUP_STEPS,
@@ -201,9 +204,6 @@ class Trainer:
                 tokenizer=self.model_manager.tokenizer,
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
-                dataset_text_field = "text",
-                max_seq_length = self.config.MAX_SEQ_LENGTH,
-                packing = False,
                 args=self.training_args,
             )
         else:
