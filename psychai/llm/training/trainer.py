@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Union
 from datasets import Dataset, load_dataset
 from ..models import ModelManager
+from unsloth.chat_templates import standardize_sharegpt
 from trl import SFTTrainer, SFTConfig
 from transformers import TrainingArguments, Trainer as HFTrainer
 from ..data import split_data
@@ -77,6 +78,7 @@ class Trainer:
             raise ValueError("train_data must be a list of dictionaries")
 
         if data_type == "chat":
+            train_dataset = standardize_sharegpt(train_dataset)
             train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
         elif data_type == "instruction":
             train_dataset = train_dataset.map(self._format_instruction_prompt, 

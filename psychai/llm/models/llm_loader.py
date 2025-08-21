@@ -32,7 +32,6 @@ class ModelManager:
         
         self.model_name = model_name
         if use_unsloth and UNSLOTH_AVAILABLE:
-            print("using unsloth")
             self.model, self.tokenizer = load_model_unsloth(
                 model_name=model_name,
                 model_path=model_path,
@@ -184,7 +183,6 @@ def load_model_unsloth(
     
     if not UNSLOTH_AVAILABLE:
         raise ImportError("Unsloth is not installed. Please install it first.")
-    print("using unsloth")
     # Use local path if provided, otherwise use model_name
     model_path = model_path if model_path else model_name
     
