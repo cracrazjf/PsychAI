@@ -10,7 +10,7 @@ logging.getLogger("transformers").setLevel(logging.INFO)
 # Check for optional dependencies
 try:
     from unsloth import FastLanguageModel
-    from unsloth.data import get_chat_template
+    from unsloth.chat_templates import get_chat_template
     UNSLOTH_AVAILABLE = True
 except ImportError:
     UNSLOTH_AVAILABLE = False
