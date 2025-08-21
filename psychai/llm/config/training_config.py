@@ -65,6 +65,8 @@ class TrainingConfig:
 
     # Evaluation / Saving / Logging
     EVAL_STRATEGY = os.getenv("EVAL_STRATEGY", "steps")
+    PER_DEVICE_EVAL_BATCH_SIZE = int(os.getenv("PER_DEVICE_EVAL_BATCH_SIZE", 1))
+    EVAL_ACCUMULATION_STEPS = int(os.getenv("EVAL_ACCUMULATION_STEPS", 4))
     EVAL_STEPS = int(os.getenv("EVAL_STEPS", 100))
     SAVE_MODEL = os.getenv("SAVE_MODEL", None)
     SAVE_STRATEGY = os.getenv("SAVE_STRATEGY", "steps")

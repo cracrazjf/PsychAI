@@ -137,7 +137,6 @@ class Trainer:
     def create_training_arguments(self):
         print(self.config.USE_UNSLOTH)
         if self.config.USE_UNSLOTH:
-            print("using trl")
             return SFTConfig(
                 dataset_text_field = "text",
                 max_length=self.config.MAX_SEQ_LENGTH,
@@ -157,6 +156,8 @@ class Trainer:
                 report_to=self.config.REPORT_TO,
                 save_strategy=self.config.SAVE_STRATEGY,
                 eval_strategy=self.config.EVAL_STRATEGY,
+                per_device_eval_batch_size=self.config.PER_DEVICE_EVAL_BATCH_SIZE,
+                eval_accumulation_steps=self.config.EVAL_ACCUMULATION_STEPS,
                 eval_steps=self.config.EVAL_STEPS,
                 logging_dir=self.config.LOGGING_DIR,
                 load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
