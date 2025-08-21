@@ -49,7 +49,7 @@ class Trainer:
             self.model_manager.apply_lora(
                 use_unsloth=use_unsloth,
                 rank=self.config.LORA_RANK,
-                alpha=self.config.ALPHA,
+                alpha=self.config.LORA_ALPHA,
                 dropout=self.config.LORA_DROPOUT,
                 target_modules=self.config.LORA_TARGET_MODULES,
                 bias=self.config.BIAS,
