@@ -133,6 +133,7 @@ class Trainer:
 
     def create_training_arguments(self):
         if self.config.USE_UNSLOTH:
+            print("using trl")
             return SFTConfig(
                 dataset_text_field = "text",
                 max_length=self.config.MAX_SEQ_LENGTH,
