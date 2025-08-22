@@ -59,8 +59,7 @@ class Evaluator:
                         has_config = "config.json" in filenames
                         has_adapter_config = "adapter_config.json" in filenames
                         has_safetensor = any(f.endswith(".safetensors") for f in filenames)
-                        if has_config or has_adapter_config:
-                            if has_safetensor:
+                        if has_config or has_adapter_config and has_safetensor:
                             out[item.name] = str(item)
         if cache_root.exists():
             for item in cache_root.iterdir():
