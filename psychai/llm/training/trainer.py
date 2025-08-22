@@ -214,14 +214,15 @@ class Trainer:
                 args=self.training_args,
             )
         else:
-            # Use standard HuggingFace trainer
-            trainer = HFTrainer(
-                model=self.model_manager.model,
-                tokenizer=self.model_manager.tokenizer,
-                train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
-                args=self.training_args,
-            )
+            raise ValueError("Unsloth is not available")
+            # # Use standard HuggingFace trainer
+            # trainer = HFTrainer(
+            #     model=self.model_manager.model,
+            #     tokenizer=self.model_manager.tokenizer,
+            #     train_dataset=train_dataset,
+            #     eval_dataset=eval_dataset,
+            #     args=self.training_args,
+            # )
         
         self.trainer = trainer
         
@@ -238,14 +239,8 @@ class Trainer:
     def save_model(self):
         if self.trainer is None:
             raise ValueError("No trainer available. Train the model first.")
-        saved_model_name = f"{self.model_manager.model_name}_{self.config.DATA_NAME}_{self.training_args.learning_rate}"
-        if self.config.SAVE_MODEL:
-            save_path = os.path.join(self.config.MODELS_PATH, f"merged_{saved_model_name}")
-            save_method = self.config.SAVE_METHOD
-            self.model_manager.model.save_pretrained_merged(save_path, self.model_manager.tokenizer, save_method = save_method)
-            print(f"💾 Merged model saved to: {save_path}")
-        else:
-            save_path = os.path.join(self.config.MODELS_PATH, f"lora_{saved_model_name}")
+        if self.config.MODEL_SAVE_PATH is not None:
+            save_path = self.config.MODEL_SAVE_PATH
             self.model_manager.tokenizer.save_pretrained(save_path)
             self.model_manager.model.save_pretrained(save_path)
             print(f"💾 Lora model saved to: {save_path}")

@@ -14,8 +14,8 @@ class TrainingConfig:
     DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", None)
     OUTPUT_DIR = os.getenv("OUTPUT_DIR", None)
     LOGGING_DIR = os.getenv("LOGGING_DIR", None)
-    MODELS_PATH = os.getenv("MODELS_PATH", None)
     MODEL_PATH = os.getenv("MODEL_PATH", None)
+    MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", None)
 
     # Data
     DATA_NAME = os.getenv("DATA_NAME", None)
