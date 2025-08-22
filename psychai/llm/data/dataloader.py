@@ -12,6 +12,9 @@ import random
 import pandas as pd
 from typing import List, Dict, Any, Optional, Callable, Iterator
 
+def find_file(root_dir, target_file):
+    return next(Path(root_dir).rglob(target_file), None)
+    
 def load_json(filepath: str) -> Any:
     """Load data from JSON file"""
     with open(filepath, 'r', encoding='utf-8') as f:
