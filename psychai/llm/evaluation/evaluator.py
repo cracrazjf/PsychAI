@@ -172,7 +172,7 @@ class Evaluator:
         
         formatted_inputs = self.format_chat(messages, reasoning_effort)
         
-        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True)
 
         def generate_response():
             with torch.no_grad():
@@ -190,8 +190,6 @@ class Evaluator:
         thread.start()
         print("Model: ", end="", flush=True)
         for new_text in streamer:
-            if new_text.strip().startswith("analysis"):
-                print("Thinking: ", end="", flush=True)
             print(new_text, end="", flush=True)
         thread.join()
         print()
@@ -477,7 +475,7 @@ class Evaluator:
                 model_name = input("Model: ").strip()
                 dataset_names = input("Datasets (comma or 'all'): ").strip()
                 if dataset_names == "all":
-                    dataset_names = datasets.keys()
+                    dataset_names = list(datasets.keys())
                 else:
                     dataset_names = [d.strip() for d in dataset_names.split(",")]
                 labels_map = {}
@@ -502,7 +500,7 @@ class Evaluator:
             if user == "compare":
                 model_names = input("Models (comma or 'all'): ").strip()
                 if model_names == "all":
-                    model_names = models.keys()
+                    model_names = list(models.keys())
                 else:
                     model_names = [m.strip() for m in model_names.split(",")]
                 dataset_name = input("Dataset: ").strip()
