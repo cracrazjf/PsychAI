@@ -17,6 +17,7 @@ import ast
 import gc
 import tqdm
 import traceback
+import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -31,7 +32,7 @@ except Exception:  # pragma: no cover - allow usage without sklearn
     confusion_matrix = None
 
 from ..models import ModelManager
-from transformers import TextStreamer
+from transformers import TextIteratorStreamer
 from ..config import EvaluationConfig
 from ..data import validate_format, load_jsonl, find_file, load_json
 
@@ -171,20 +172,26 @@ class Evaluator:
         
         formatted_inputs = self.format_chat(messages, reasoning_effort)
         
-        streamer = TextStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-        with torch.no_grad():
-            outputs = self.model_manager.model.generate(
-                **formatted_inputs,
-                streamer=streamer,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=do_sample,
-                top_p=top_p,
-                top_k=top_k,
-            )
+        def generate_response():
+            with torch.no_grad():
+                self.model_manager.model.generate(
+                    **formatted_inputs,
+                    streamer=streamer,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    do_sample=do_sample,
+                    top_p=top_p,
+                    top_k=top_k,
+                )
         
-        return outputs
+        thread = threading.Thread(target=generate_response)
+        thread.start()
+        print("Model: ", end="", flush=True)
+        for new_text in streamer:
+            print(new_text, end="", flush=True)
+        thread.join()
 
     def evaluate_outputs(self, 
                     data_type: str,
@@ -460,7 +467,7 @@ class Evaluator:
                         break
                     if not msg:
                         continue
-                    print("Model:", self.chat(messages, generate_args))
+                    self.chat(messages, generate_args)
                 continue
 
             if user == "benchmark":
