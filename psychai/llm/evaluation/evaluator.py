@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - allow usage without sklearn
 from ..models import ModelManager
 from transformers import TextStreamer
 from ..config import EvaluationConfig
-from ..data import validate_format, load_jsonl, find_file
+from ..data import validate_format, load_jsonl, find_file, load_json
 
 class Evaluator:
     def __init__(self, config: EvaluationConfig):
