@@ -129,7 +129,7 @@ class Evaluator:
         return selected_datasets
 
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
-        data_type = dataset_name.split("_")[-1]
+        data_type = dataset_name.split("_")[0]
         data = list(load_jsonl(data_path))
         if data_type == "chat":
             if validate_format(data, "chat"):
