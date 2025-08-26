@@ -237,6 +237,8 @@ class Trainer:
         return self.model
     
     def save_model(self):
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H")
         if self.trainer is None:
             raise ValueError("No trainer available. Train the model first.")
         if self.config.MODEL_SAVE_PATH is not None:

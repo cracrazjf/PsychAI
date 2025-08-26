@@ -30,9 +30,9 @@ except Exception:  # pragma: no cover - allow usage without sklearn
     classification_report = None
     confusion_matrix = None
 
+from ..models import ModelManager
 from transformers import TextStreamer
 from ..config import EvaluationConfig
-from ..models import ModelManager
 from ..data import validate_format, load_jsonl, find_file
 
 class Evaluator:

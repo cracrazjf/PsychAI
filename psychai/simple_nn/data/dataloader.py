@@ -18,31 +18,9 @@ import gzip
 import io
 import csv
 import zstandard as zstd
+from ...simple_nn.models.language_loader import ModelManager
 
 PAD, BOS, EOS, UNK, CLS, SEP, MASK = "<pad>", "<bos>", "<eos>", "<unk>", "<cls>", "<sep>", "<mask>"
-
-@dataclass
-class Record:
-    id: str
-    text: str
-    meta: Dict[str, Any]
-
-def _open_text(path: str) -> Iterator[str]:
-    """Yield lines from (possibly compressed) single-file text."""
-    if path.endswith(".gz"):
-        with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as f:
-            for line in f: yield line
-    elif path.endswith(".zst"):
-        if zstd is None:
-            raise RuntimeError("zstandard not installed; cannot read .zst")
-        with open(path, "rb") as f:
-            dctx = zstd.ZstdDecompressor()
-            with dctx.stream_reader(f) as r:
-                for line in io.TextIOWrapper(r, encoding="utf-8", errors="ignore"):
-                    yield line
-    else:
-        with open(path, "rt", encoding="utf-8", errors="ignore") as f:
-            for line in f: yield line
 
 @dataclass
 class VocabPack:
@@ -55,21 +33,6 @@ class VocabPack:
     cls_id: int
     sep_id: int
     mask_id: int
-
-def normalize_text(s: str) -> str:
-    # keep simple & predictable; customize as needed
-    return " ".join(s.strip().split())
-
-def stable_id(*parts: Any) -> str:
-    """Deterministic ID via BLAKE2b over input parts."""
-    h = hashlib.blake2b(digest_size=16)
-    for p in parts:
-        if isinstance(p, (bytes, bytearray)):
-            h.update(p)
-        else:
-            h.update(str(p).encode("utf-8", errors="ignore"))
-            h.update(b"|")
-    return h.hexdigest()
 
 def tokenize(s: str, level: str = "word") -> List[str]:
     return list(s) if level == "char" else normalize_text(s).split()
@@ -97,6 +60,10 @@ def encode(tokens: List[str], vocab: VocabPack, unk_ok: bool = True) -> List[int
         raise KeyError(f"Unknown tokens encountered: {missing[:5]}...")
     return [vocab.stoi[t] for t in tokens]
 
+def decode(ids: Iterable[int], vocab: VocabPack, strip_specials: bool = True) -> List[str]:
+    toks = [vocab.itos[i] if 0 <= i < len(vocab.itos) else UNK for i in ids]
+    return [t for t in toks if not (strip_specials and t in {PAD,BOS,EOS,CLS,SEP,MASK})]
+
 def add_specials(
     ids: List[int],
     *,
@@ -110,41 +77,37 @@ def add_specials(
     if add_eos: out = out + [eos_id]
     return out
 
-def create_windows(
-    ids: List[int],
-    sequence_length: int,
-    *,
-    stride: Optional[int] = None,
-    require_min_len: int = 2
-) -> List[List[int]]:
-    """
-    Break one long stream into blocks of (<= block_size+1) so we can shift for LM.
-    Returns a list of 1D int lists (each length >= require_min_len).
-    """
-    if stride is None: stride = sequence_length
-    out: List[List[int]] = []
-    i = 0
-    while i + 1 < len(ids):
-        blk = ids[i: i + sequence_length + 1]
-        if len(blk) >= require_min_len:
-            out.append(blk)
-        i += stride
-    return out
+def _open_text(path: str) -> Iterator[str]:
+    """Yield lines from (possibly compressed) single-file text."""
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as f:
+            for line in f: yield line
+    elif path.endswith(".zst"):
+        if zstd is None:
+            raise RuntimeError("zstandard not installed; cannot read .zst")
+        with open(path, "rb") as f:
+            dctx = zstd.ZstdDecompressor()
+            with dctx.stream_reader(f) as r:
+                for line in io.TextIOWrapper(r, encoding="utf-8", errors="ignore"):
+                    yield line
+    else:
+        with open(path, "rt", encoding="utf-8", errors="ignore") as f:
+            for line in f: yield line
 
-def create_windows_from_texts(texts: List[str], 
-    vocab: VocabPack,
-    *,
-    level: str = "word",
-    sequence_length: int = 256,
-    add_eos: bool = True) -> List[List[int]]:
-    if add_eos:
-        eos = [vocab.eos_id]
-        stream: List[int] = []
-    for s in texts:
-        ids = encode(tokenize(s, level), vocab)
-        stream.extend(ids + eos)
-    windows = create_windows(stream, sequence_length, stride=sequence_length, require_min_len=2)
-    return [torch.tensor(w, dtype=torch.long) for w in windows]
+def normalize_text(s: str) -> str:
+    # keep simple & predictable; customize as needed
+    return " ".join(s.strip().split())
+
+def stable_id(*parts: Any) -> str:
+    """Deterministic ID via BLAKE2b over input parts."""
+    h = hashlib.blake2b(digest_size=16)
+    for p in parts:
+        if isinstance(p, (bytes, bytearray)):
+            h.update(p)
+        else:
+            h.update(str(p).encode("utf-8", errors="ignore"))
+            h.update(b"|")
+    return h.hexdigest()
 
 def pad_sequences(seqs: List[torch.Tensor], pad_id: int) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -161,65 +124,42 @@ def pad_sequences(seqs: List[torch.Tensor], pad_id: int) -> Tuple[torch.Tensor, 
         attn_mask[i, :n] = 1
     return input_ids, attn_mask
 
-def build_labels_causal_lm(batch_blocks: List[torch.Tensor], pad_id: int, ignore_index: int = -100) -> Dict[str, torch.Tensor]:
-    """
-    batch_blocks: list of 1D tensors length L_i (already (tokens + next) for each sample).
-    Returns input_ids [B,T], attention_mask [B,T], labels [B,T] (shifted, with -100 on pads).
-    """
-    inputs = [b[:-1] for b in batch_blocks if b.numel() >= 2]
-    labels = [b[1:]  for b in batch_blocks if b.numel() >= 2]
-    assert inputs, "All sequences too short for next-token."
-    x, attn = pad_sequences(inputs, pad_id)
-    y, _    = pad_sequences(labels, pad_id=ignore_index)   # temporary; we’ll overwrite pads to -100
-    y = torch.where(attn.bool(), y, torch.full_like(y, ignore_index))
-    return {"input_ids": x, "attention_mask": attn, "labels": y}
+@dataclass
+class Record:
+    id: str
+    text: str
+    meta: Dict[str, Any]
 
-def collate_causal_lm(batch_blocks: List[torch.Tensor], pad_id: int, ignore_index: int = -100) -> Dict[str, torch.Tensor]:
-    return build_labels_causal_lm(batch_blocks, pad_id, ignore_index)
-
-def decode(ids: Iterable[int], vocab: VocabPack, strip_specials: bool = True) -> List[str]:
-    toks = [vocab.itos[i] if 0 <= i < len(vocab.itos) else UNK for i in ids]
-    return [t for t in toks if not (strip_specials and t in {PAD,BOS,EOS,CLS,SEP,MASK})]
-    
-def to_record(text: str, *, source: str, meta: Optional[Dict[str, Any]] = None) -> Record:
+def to_record(text: str, source: str, meta: Optional[Dict[str, Any]] = None) -> Record:
     text = normalize_text(text)
     rid = stable_id(source, text)
-    return Record(id=rid, text=text, meta=(meta or {"source": source}))
+    return Record(id=rid, text=text, meta=meta or {"source": source})
 
 def read_txt_lines(path: str) -> Iterator[Record]:
     for i, line in enumerate(_open_text(path)):
         line = line.strip()
         if line:
-            yield to_record(line, source=f"{path}#{i}")
+            yield to_record(line, source=f"{line}#{i}", meta={"source": path})
 
 def read_jsonl(path: str, text_key: str = "text") -> Iterator[Record]:
     for i, line in enumerate(_open_text(path)):
-        if not line.strip(): continue
-        try:
-            obj = json.loads(line)
-        except Exception:
-            continue
-        text = obj.get(text_key) or obj.get("content") or obj.get("body") or ""
-        meta = {k: v for k, v in obj.items() if k != text_key}
-        if text:
-            yield to_record(text, source=f"{path}#{i}", meta=meta)
+        if not isinstance(line, dict):
+            raise ValueError(f"each line must be a dictionary")
+        text = line.get(text_key) or line.get("content") or line.get("body") or ""
+        if text.strip():
+            yield to_record(text, source=f"{text}#{i}", meta={"source": path})
 
 def read_csv(path: str, text_col: str = "text", delimiter: str = None) -> Iterator[Record]:
     sep = delimiter or ("\t" if path.endswith(".tsv") else ",")
     with open(path, "rt", encoding="utf-8", errors="ignore") as f:
-        r = csv.DictReader(f, delimiter=sep)
-        cols = r.fieldnames or []
-        for i, row in enumerate(r):
+        rows = csv.DictReader(f, delimiter=sep)
+        cols = rows.fieldnames or []
+        for i, row in enumerate(rows):
             text = row.get(text_col, "")
-            meta = {k: v for k in row.items() if k[0] != text_col}
             if text.strip():
-                yield to_record(text, source=f"{path}#{i}", meta=meta)            
+                yield to_record(text, source=f"{text}#{i}", meta={"source": path})            
 
 def read_childes(source: str, *, participant: str = "CHI", by_utterance: bool = True, match: Optional[str] = None) -> Iterator[Record]:
-    """
-    source: path to a local .zip/.cha directory or a TalkBank URL to a zip.
-    participant: "CHI" for child (default), others like "MOT", "FAT"...
-    """
     try:
         import pylangacq
     except Exception as e:
@@ -235,18 +175,18 @@ def read_childes(source: str, *, participant: str = "CHI", by_utterance: bool = 
             if not words: continue
             text = " ".join(words)
             meta = {"participant": participant, "corpus": source, "utterance_index": i}
-            yield to_record(text, source=f"{source}#utt{i}", meta=meta)
+            yield to_record(text, source=f"{participant}_{text}#utt{i}", meta=meta)
     else:
         # one record per file: join all words
         all_words = rdr.words(participants=participant)
         text = " ".join(all_words)
         yield to_record(text, source=f"{source}", meta={"participant": participant, "corpus": source})
 
-def train_test_split(
+def split_data(
     records: Iterator[Record],
-    train_path: Optional[str] = None,
-    test_path: Optional[str] = None,
+    save_path: str,
     test_ratio: float = 0.2,
+    validation_ratio: float = 0.0,
     id_key: str = "id"
 ):
     """
@@ -261,9 +201,10 @@ def train_test_split(
     """
     train_records = []
     test_records = []
-    if train_path is None and test_path is None:
+    validation_records = []
+    if save_path is None:
         for rec in records:
-            sid = str(rec.get(id_key, json.dumps(rec, sort_keys=True)))
+            sid = str(rec.id)
 
             # hash → float between 0 and 1
             h = hashlib.md5(sid.encode("utf-8")).hexdigest()
@@ -271,19 +212,24 @@ def train_test_split(
 
             if p < test_ratio:
                 test_records.append(rec)
+            elif p < test_ratio + validation_ratio:
+                validation_records.append(rec)
             else:
                 train_records.append(rec)
         
-        return train_records, test_records
+        return train_records, validation_records, test_records
     else:
-        with open(train_path, "w", encoding="utf-8") as f_train, \
-            open(test_path, "w", encoding="utf-8") as f_test:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+        with open(os.path.join(save_path, "train.jsonl"), "w", encoding="utf-8") as f_train, \
+            open(os.path.join(save_path, "test.jsonl"), "w", encoding="utf-8") as f_test, \
+            open(os.path.join(save_path, "validation.jsonl"), "w", encoding="utf-8") as f_validation:
 
             train_records = []
             test_records = []
             for rec in records:
                 # pick something stable to hash
-                sid = str(rec.get(id_key, json.dumps(rec, sort_keys=True)))
+                sid = str(rec.id)
 
                 # hash → float between 0 and 1
                 h = hashlib.md5(sid.encode("utf-8")).hexdigest()
@@ -292,45 +238,29 @@ def train_test_split(
                 if p < test_ratio:
                     test_records.append(rec)
                     f_test.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                elif p < test_ratio + validation_ratio:
+                    validation_records.append(rec)
+                    f_validation.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 else:
                     train_records.append(rec)
                     f_train.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-        print(f"✅ Wrote {len(train_records)} train records to {train_path}, {len(test_records)} test records to {test_path}")
-        return train_records, test_records
+        print(f"✅ Wrote {len(train_records)} train records to {os.path.join(save_path, 'train.jsonl')}, {len(test_records)} test records to {os.path.join(save_path, 'test.jsonl')}")
+        print(f"✅ Wrote {len(validation_records)} validation records to {os.path.join(save_path, 'validation.jsonl')}")
+        return train_records, validation_records, test_records
 
-def create_dataloader_hf(config: TrainingConfig, 
-                        *,
-                        tokenizer: Optional[AutoTokenizer] = None,
-                        train_path: Optional[str] = None, 
-                        test_path: Optional[str] = None,
-                        train_data: Optional[List[Record]] = None,
-                        test_data: Optional[List[Record]] = None) -> Tuple[DataLoader, DataLoader]:
-    model_name = config.MODEL_NAME
-    task_type = config.TASK_TYPE
-    sequence_length = config.SEQUENCE_LENGTH
-    if tokenizer is None:
-        trust_remote_code = config.TRUST_REMOTE_CODE
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote_code, use_fast=True)
-    if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
-    if train_path is not None and test_path is not None:
-        dataset = load_dataset("json", data_files={"train": train_path, "test": test_path})
-    elif train_path is not None and test_path is None:
-        dataset = load_dataset("json", data_files={"train": train_path})
-    elif train_data is not None and test_data is not None:
-        dataset = DatasetDict({
-            "train": Dataset.from_list(train_data),
-            "test":  Dataset.from_list(test_data),
-        })
-    elif train_data is not None and test_data is None:
-        dataset = DatasetDict({
-            "train": Dataset.from_list(train_data),
-        })
+def create_dataloader_hf(config: TrainingConfig,
+                        model_manager: ModelManager) -> Tuple[DataLoader, DataLoader]:
+
+    if model_manager.tokenizer.pad_token is None: model_manager.tokenizer.pad_token = model_manager.tokenizer.eos_token
+    train_dataset = load_dataset("json", data_files=config.TRAIN_DATA_PATH, split="train")
+    if config.EVAL_DATA_PATH is not None:
+        eval_dataset = load_dataset("json", data_files=config.EVAL_DATA_PATH, split="train")
     else:
-        raise ValueError("Either train_path or train_data must be provided")
+        eval_dataset = None
     
     def tokenize_function(examples):
-        return tokenizer(examples["text"], add_special_tokens=False)
+        return model_manager.tokenizer(examples["text"], add_special_tokens=False)
     
     def create_inputs_and_labels(examples):
         #flatten the document 
@@ -345,9 +275,10 @@ def create_dataloader_hf(config: TrainingConfig,
     tok_ds = dataset.map(tokenize_function, batched=True, num_proc=1, remove_columns=dataset["train"].column_names)
     lm_ds  = tok_ds.map(create_inputs_and_labels, batched=True, num_proc=1)
     
-    if task_type == "causal_lm":
+    task = self.config.TASK
+    if task == "causal_lm":
         collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    elif task_type == "masked_lm":
+    elif task == "masked_lm":
         collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True)
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
@@ -357,37 +288,3 @@ def create_dataloader_hf(config: TrainingConfig,
     val_loader   = DataLoader(lm_ds["test"],  batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=collator)
 
     return train_loader, val_loader
-
-def create_dataloader_custom(config: TrainingConfig, 
-                             *,
-                             train_path: str, 
-                             test_path: str) -> Tuple[DataLoader, DataLoader]:
-    add_eos = config.ADD_EOS
-    batch_size = config.BATCH_SIZE
-    sequence_length = config.SEQUENCE_LENGTH
-    def iter_texts(path):
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                obj = json.loads(line)
-                txt = obj.get("text", "").strip()
-                if txt: yield txt
-    train_texts = list(iter_texts(train_path))
-    eval_texts  = list(iter_texts(test_path))
-    vocab = build_vocab(train_texts, min_freq=1)
-    train_windows = create_windows_from_texts(train_texts, vocab, sequence_length=sequence_length, add_eos=add_eos)
-    eval_windows = create_windows_from_texts(eval_texts, vocab, sequence_length=sequence_length, add_eos=add_eos)
-
-    class Blocks(Dataset):
-        def __init__(self, blocks): self.blocks = blocks
-        def __len__(self): return len(self.blocks)
-        def __getitem__(self, i): return self.blocks[i]
-    
-    train_ds = Blocks(train_windows)
-    eval_ds = Blocks(eval_windows)
-
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=lambda b: collate_causal_lm(b, vocab.pad_id))
-    eval_loader = DataLoader(eval_ds, batch_size=batch_size, shuffle=False, collate_fn=lambda b: collate_causal_lm(b, vocab.pad_id))
-
-    return train_loader, eval_loader
-
-

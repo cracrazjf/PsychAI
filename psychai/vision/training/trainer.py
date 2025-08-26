@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ...config import TrainingConfig
 from typing import Any, Optional, List
-from ..models import load_pretrained_hf_vision
+from ..models import ModelManager
 from ..data.dataloader import create_dataloader, Record
 import torch
 import torch.nn as nn
@@ -18,58 +18,20 @@ class HFVisionTrainer:
             config: Training configuration instance
         """
         self.config = config
+        self.model_manager = None
         self.model = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def _adapt_new_classifier(self, model):
-        if self.config.TASK_TYPE == "detection":
-            head = getattr(model, "class_embed", None) or getattr(model, "class_labels_classifier", None)
-            if head is None:
-                raise ValueError("No class embed or class labels classifier found in model")
-            in_features = getattr(model, head).in_features
-            new_head = nn.Linear(in_features, self.config.NUM_CLASSES+1)
-            _init_classifier_weights(new_head)
-            if head == "class_embed":
-                model.class_embed = new_head
-            elif head == "class_labels_classifier":
-                model.class_labels_classifier = new_head
-            model.config.num_labels = self.config.NUM_CLASSES
-            model.config.id2label = {i: name for i, name in enumerate(self.config.CLASS_NAMES)}
-            model.config.label2id = {v: k for k, v in model.config.id2label.items()}
-
-        elif self.config.TASK_TYPE == "segmentation":
-            head = model.decode_head.classifier if hasattr(model, "decode_head") else model.sem_seg_head.classifier
-            if head is None:
-                raise ValueError("No decode head or sem seg head found in model")
-            in_channels = head.in_channels
-            model.decode_head.classifier = torch.nn.Conv2d(in_channels, self.config.NUM_CLASSES+1, kernel_size=1)
-            _init_decoder_weights(model.decode_head.classifier)
-
-            model.config.num_labels = self.config.NUM_CLASSES
-            model.config.id2label = {i: name for i, name in enumerate(self.config.CLASS_NAMES)}
-            model.config.label2id = {v: k for k, v in model.config.id2label.items()}
-        else:
-            raise ValueError(f"Unsupported task type: {self.config.TASK_TYPE}")
-
-        def _init_classifier_weights(new_head):
-            if self.config.INIT_WEIGHTS == "xavier_uniform":
-                nn.init.xavier_uniform_(new_head.weight)
-                nn.init.zeros_(new_head.bias)
-            elif self.config.INIT_WEIGHTS == "kaiming_uniform":
-                nn.init.kaiming_uniform_(new_head.weight)
-                nn.init.zeros_(new_head.bias)
-            else:
-                raise ValueError(f"Unsupported initialization method: {self.config.INIT_WEIGHTS}")
-
-        def _init_decoder_weights(decoder):
-            if self.config.INIT_WEIGHTS == "xavier_uniform":
-                nn.init.xavier_uniform_(decoder.weight, mode="fan_out", nonlinearity="relu")
-                nn.init.zeros_(decoder.bias)
-            elif self.config.INIT_WEIGHTS == "kaiming_uniform":
-                nn.init.kaiming_uniform_(decoder.weight, mode="fan_out", nonlinearity="relu")
-                nn.init.zeros_(decoder.bias)
-            else:
-                raise ValueError(f"Unsupported initialization method: {self.config.INIT_WEIGHTS}")
+    def get_model(self):
+        loading_from = self.config.loading_from
+        model_name = self.config.MODEL_NAME
+        pretrained = self.config.PRETRAINED
+        task = self.config.TASK
+        trust_remote_code = self.config.TRUST_REMOTE_CODE
+        num_classes = self.config.NUM_CLASSES
+        class_names = self.config.CLASS_NAMES
+        self.model_manager = ModelManager(model_name, loading_from, pretrained, task)
+        self.model_manager.load_model(num_classes, class_names, trust_remote_code)
 
     def _create_optimizer(self, model):
         if self.config.OPTIMIZER == "adamw":

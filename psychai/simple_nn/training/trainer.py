@@ -50,8 +50,8 @@ class RegressionAdapter(BaseAdapter):
 
 # 3) Language modeling (word prediction & classification)
 class LanguageAdapter(BaseAdapter):
-    def __init__(self, task_type: str, ignore_index: int = -100):
-        self.task_type = task_type
+    def __init__(self, task: str, ignore_index: int = -100):
+        self.task = task
         self.ignore_index = ignore_index
 
     def forward(self, model, batch):
@@ -67,7 +67,7 @@ class LanguageAdapter(BaseAdapter):
 
     def metrics(self, outputs, batch):
         with torch.no_grad():
-            if self.task_type == "prediction":
+            if self.task == "causal_lm" or self.task == "masked_lm":
                 B, T, V = outputs["logits"].shape
                 logits = outputs["logits"].reshape(B*T, V)
                 labels = batch["labels"].reshape(B*T)
@@ -77,7 +77,7 @@ class LanguageAdapter(BaseAdapter):
                     return {"ppl": float("nan")}
                 ce = F.cross_entropy(logits[valid], labels[valid], reduction="mean").item()
                 return {"ppl": math.exp(ce)}
-            elif self.task_type == "classification":
+            elif self.task == "seq_cls":
                 B, T, C = outputs["logits"].shape
                 pred = outputs["logits"].argmax(-1)
                 mask = batch["labels"] != self.ignore_index
@@ -87,20 +87,13 @@ class LanguageAdapter(BaseAdapter):
             else:
                 raise ValueError(f"Unsupported task type: {self.task_type}")
 
-class NNTrainer:
+class Trainer:
     def __init__(self, config: TrainingConfig):
-        self.model = None
-        self.tokenizer = None
-        self.adapter = None
-        self.opt = None
         self.config = config
-        self.scaler = None
-        self.lr = config.LEARNING_RATE
-        self.weight_decay = config.WEIGHT_DECAY
-        self.lr_scheduler = config.LR_SCHEDULER if config.LR_SCHEDULER is not None else None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # AMP setup
-        self.use_amp = config.USE_AMP
+        self.model_manager = None
+        self.task = config.TASK
+
+    def setup_amp(self):
         if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
             self.autocast_dtype = torch.bfloat16
         elif torch.cuda.is_available():
@@ -109,27 +102,28 @@ class NNTrainer:
         else:
             self.autocast_dtype = None
 
-    def get_adapter(self):
-        if self.config.TASK_TYPE == "classification":
-            if self.config.MODEL_TYPE == "timm":
-                return ClassificationAdapter(class_weights=self.config.CLASS_WEIGHTS, label_smoothing=self.config.LABEL_SMOOTHING)
-            else:
-                return LanguageAdapter(task_type=self.config.TASK_TYPE)
-        elif self.config.TASK_TYPE == "regression":
-            return RegressionAdapter()
-        elif self.config.TASK_TYPE == "prediction":
-            return LanguageAdapter(task_type=self.config.TASK_TYPE)
+    def get_adapter(self) -> BaseAdapter:
+        class_weights = self.config.CLASS_WEIGHTS
+        label_smoothing = self.config.LABEL_SMOOTHING
+        ignore_index = self.config.IGNORE_INDEX
+        adapter_map = {
+            "image_cls": ClassificationAdapter(class_weights=class_weights, label_smoothing=label_smoothing),
+            "reg_lm": RegressionAdapter(),
+            "causal_lm": LanguageAdapter(task="causal_lm", ignore_index=ignore_index),
+            "masked_lm": LanguageAdapter(task="masked_lm", ignore_index=ignore_index),
+            "seq_cls": LanguageAdapter(task_type="seq_cls", ignore_index=ignore_index),
+        }
+        return adapter_map[self.task]
     
     def get_model(self) -> nn.Module:
-        if self.config.MODEL_TYPE == "timm":
-            from ...vision.models import load_pretrained_timm
-            print(f"Loading model for {self.config.MODEL_TYPE}")
-            self.model, self.transform, self.transform_val = load_pretrained_timm(self.config)
-        elif self.config.MODEL_TYPE == "hf-language":
-            from ...simple_nn.models import load_pretrained_hf_language
-            print(f"Loading model for {self.config.MODEL_TYPE}")
-            self.model, self.tokenizer = load_pretrained_hf_language(self.config)
-        self.model.to(self.device)
+        if "image" in self.task:
+            pass
+        else:
+            from ...simple_nn.models.language_loader import ModelManager
+            model_name = self.config.MODEL_NAME
+            trust_remote_code = self.config.TRUST_REMOTE_CODE
+            self.model_manager = ModelManager(model_name, trust_remote_code, self.task_type)
+            self.model_manager.load_model()
 
     def get_dataloader(self, train_data: List[Record], eval_data: Optional[List[Record]] = None) -> Tuple[DataLoader, DataLoader]:
         if self.config.MODEL_TYPE == "timm":
