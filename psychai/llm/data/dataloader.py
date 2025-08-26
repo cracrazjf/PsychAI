@@ -76,7 +76,7 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
                 if not isinstance(message, dict):
                     raise ValueError(f"message is not a dict")
                 
-                if 'role' not in message or 'content' not in message:
+                if message.get("role") is None or message.get("content") is None:
                     raise ValueError(f"message does not have role and content")
                 
                 if message['role'] not in ['system', 'user', 'assistant']:
