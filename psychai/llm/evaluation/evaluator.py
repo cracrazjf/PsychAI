@@ -194,7 +194,7 @@ class Evaluator:
         for new_text in streamer:
             if not started:
                 started = True
-                if new_text.strip().startswith("analysis"):
+                if new_text.strip().startswith("analysisUser"):
                     thinking = True
                     print("Thinking: ", end="", flush=True)
                 else:
