@@ -51,7 +51,7 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
         True if data is in valid format, False otherwise
     """
     if not isinstance(data, list):
-        return False
+        raise ValueError(f"data is not a list")
     """
     Check if data is in valid chat format
     
@@ -68,17 +68,17 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
     if format == "chat":
         for conversation in data:
             if not isinstance(conversation, list):
-                return False
+                raise ValueError(f"conversation is not a list")
             
             for message in conversation:
                 if not isinstance(message, dict):
-                    return False
+                    raise ValueError(f"message is not a dict")
                 
                 if 'role' not in message or 'content' not in message:
-                    return False
+                    raise ValueError(f"message does not have role and content")
                 
                 if message['role'] not in ['system', 'user', 'assistant']:
-                    return False
+                    raise ValueError(f"message has invalid role: {message['role']}")
         return True
     """
     Check if data is in valid instruction format
@@ -92,10 +92,10 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
     if format == "instruction":
         for conversation in data:
             if not isinstance(conversation, dict):
-                return False
+                raise ValueError(f"conversation is not a dict")
             
             if 'instruction' not in conversation or 'output' not in conversation:
-                return False
+                raise ValueError(f"conversation does not have instruction and output")
         return True
 
 def stable_id(*parts: Any) -> str:

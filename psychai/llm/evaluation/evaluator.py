@@ -130,14 +130,9 @@ class Evaluator:
 
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
         data_type = dataset_name.split("_")[-1]
-        print(data_path)
         data = list(load_jsonl(data_path))
-        if data_type == "chat":
-            if validate_format(data, "chat"):
-                return data, data_type
-        elif data_type == "instruction":
-            if validate_format(data, "instruction"):
-                return data, data_type
+        if validate_format(data, data_type):
+            return data, data_type
         else:
             raise ValueError(f"Invalid data type: {data_type}")
 
