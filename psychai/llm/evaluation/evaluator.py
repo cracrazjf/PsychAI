@@ -131,7 +131,7 @@ class Evaluator:
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
         data_type = dataset_name.split("_")[-1]
         data = list(load_jsonl(data_path))
-        print(data[0])
+        print(data_path)
         if validate_format(data, data_type):
             return data, data_type
         else:
@@ -193,7 +193,7 @@ class Evaluator:
 
     def evaluate_outputs(self, 
                     data_type: str,
-                    messages: Any, 
+                    conversations: Any, 
                     labels: List[str],
                     generate_args: Optional[Dict[str, Any]] = None) -> str:
         
@@ -206,17 +206,19 @@ class Evaluator:
         prompt_template = self.config.PROMPT_TEMPLATE
         
         if data_type == "chat":
-            formatted_inputs = self.format_chat(messages, reasoning_effort)
+            formatted_inputs = []
             answers = []
-            for message in messages:
-                for dict in message:
-                    if dict["role"] == "assistant":
-                        answers.append(dict["content"])
+            for conversation in conversations:
+                formatted_inputs.append(self.format_chat(conversation["messages"], reasoning_effort))
+                for message in conversation["messages"]:
+                    if message["role"] == "assistant":
+                        answers.append(message["content"])
         elif data_type == "instruction":
-            formatted_inputs = self.format_instruction(messages, prompt_template)
+            formatted_inputs = []
             answers = []
-            for message in messages:
-                answers.append(message["output"])
+            for conversation in conversations:
+                formatted_inputs.append(self.format_instruction(conversation, prompt_template))
+                answers.append(conversation["output"])
         else:
             raise ValueError(f"Invalid data type: {data_type}")
 
@@ -505,7 +507,7 @@ class Evaluator:
                 max_samples = int(max_samples) if max_samples else None
 
                 while True:
-                    labels = input(f"Enter labels for the dataset {dataset_name} e.g.[label1,label2]: ").strip()
+                    labels = input(f"Enter labels for the dataset {dataset_name} e.g. [label1,label2]: ").strip()
                     if labels:
                         labels = ast.literal_eval(labels)
                         break

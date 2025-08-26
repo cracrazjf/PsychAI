@@ -71,11 +71,9 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
                 conversation = conversation["messages"]
             if not isinstance(conversation, list):
                 raise ValueError(f"conversation is not a list")
-            
             for message in conversation:
                 if not isinstance(message, dict):
                     raise ValueError(f"message is not a dict")
-                print(message)
                 if message.get("role") is None or message.get("content") is None:
                     raise ValueError(f"message does not have role and content")
                 
