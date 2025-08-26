@@ -188,33 +188,13 @@ class Evaluator:
         
         thread = threading.Thread(target=generate_response)
         thread.start()
-        started = False
-        thinking = False
-
+        print("Model: ", end="", flush=True)
         for new_text in streamer:
-            if not started:
-                started = True
-                if new_text.strip().startswith("analysisUser"):
-                    thinking = True
-                    print("Thinking: ", end="", flush=True)
-                else:
-                    print("Model: ", end="", flush=True)
-
-            # If we’re in thinking mode and detect assistantfinal → switch
-            if thinking and "assistantfinal" in new_text:
-                thinking = False
-                before, _, after = new_text.partition("assistantfinal")
-                print(before, end="", flush=True)   # finish Thinking line
-                print()                             # newline
-                print("Model: ", end="", flush=True)
-                if after:
-                    print(after, end="", flush=True)
-                continue
-
-            # Otherwise, just keep streaming text
+            if new_text.strip().startswith("analysis"):
+                print("Thinking: ", end="", flush=True)
             print(new_text, end="", flush=True)
-
-        print() 
+        thread.join()
+        print()
 
     def evaluate_outputs(self, 
                     data_type: str,
