@@ -192,6 +192,7 @@ class Evaluator:
         for new_text in streamer:
             print(new_text, end="", flush=True)
         thread.join()
+        print()
 
     def evaluate_outputs(self, 
                     data_type: str,
