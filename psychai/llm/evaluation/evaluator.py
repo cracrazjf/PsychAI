@@ -86,7 +86,7 @@ class Evaluator:
         return selected_models
 
     def load_model_and_tokenizer(self, model_name: str, model_path: str, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
-        self.model_manager.load(model_name, model_path, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, dtype=dtype)
+        self.model_manager.load_model(model_name, model_path, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, dtype=dtype)
         return self.model_manager.model, self.model_manager.tokenizer
 
     # list available datasets in data_root
