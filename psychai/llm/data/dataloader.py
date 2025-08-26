@@ -68,6 +68,7 @@ def validate_format(data: List[Any], format: str = "chat") -> bool:
     if format == "chat":
         for conversation in data:
             if not isinstance(conversation, list):
+                print(conversation)
                 raise ValueError(f"conversation is not a list")
             
             for message in conversation:

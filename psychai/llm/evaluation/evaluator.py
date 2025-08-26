@@ -131,6 +131,7 @@ class Evaluator:
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
         data_type = dataset_name.split("_")[-1]
         data = list(load_jsonl(data_path))
+        print(data[0])
         if validate_format(data, data_type):
             return data, data_type
         else:
