@@ -111,7 +111,7 @@ class Evaluator:
                             for j in processed_path.glob("test*.json*"):
                                 test_json = str(j)
                                 break
-                            out[item.name+"_"+data_type] = test_json
+                            out[dir+"_"+data_type] = test_json
         return dict(sorted(out.items()))
 
     def select_datasets(self, dataset_names: Union[List[str], str]) -> List[str]:
