@@ -172,7 +172,7 @@ class Evaluator:
         
         formatted_inputs = self.format_chat(messages, reasoning_effort)
         
-        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True)
 
         def generate_response():
             with torch.no_grad():
