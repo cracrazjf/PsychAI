@@ -172,7 +172,7 @@ class Evaluator:
         
         formatted_inputs = self.format_chat(messages, reasoning_effort)
         
-        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True)
+        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
 
         def generate_response():
             with torch.no_grad():
@@ -188,11 +188,33 @@ class Evaluator:
         
         thread = threading.Thread(target=generate_response)
         thread.start()
-        print("Model: ", end="", flush=True)
+        started = False
+        thinking = False
+
         for new_text in streamer:
+            if not started:
+                started = True
+                if new_text.strip().startswith("analysis"):
+                    thinking = True
+                    print("Thinking: ", end="", flush=True)
+                else:
+                    print("Model: ", end="", flush=True)
+
+            # If we’re in thinking mode and detect assistantfinal → switch
+            if thinking and "assistantfinal" in new_text:
+                thinking = False
+                before, _, after = new_text.partition("assistantfinal")
+                print(before, end="", flush=True)   # finish Thinking line
+                print()                             # newline
+                print("Model: ", end="", flush=True)
+                if after:
+                    print(after, end="", flush=True)
+                continue
+
+            # Otherwise, just keep streaming text
             print(new_text, end="", flush=True)
-        thread.join()
-        print()
+
+        print() 
 
     def evaluate_outputs(self, 
                     data_type: str,
