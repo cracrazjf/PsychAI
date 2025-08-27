@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - allow usage without sklearn
     classification_report = None
     confusion_matrix = None
 
+from datasets import load_dataset
 from ..models import ModelManager
 from transformers import TextIteratorStreamer
 from ..config import EvaluationConfig
@@ -130,12 +131,8 @@ class Evaluator:
 
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
         data_type = dataset_name.split("_")[-1]
-        data = list(load_jsonl(data_path))
-        print(data_path)
-        if validate_format(data, data_type):
-            return data, data_type
-        else:
-            raise ValueError(f"Invalid data type: {data_type}")
+        data = load_dataset("json", data_files=data_path, split="test")
+        return data, data_type
 
     def format_chat(self, messages: Any, reasoning_effort: Optional[str] = None) -> str:
         device = next(self.model_manager.model.parameters()).device
@@ -144,13 +141,12 @@ class Evaluator:
         return self.model_manager.tokenizer.apply_chat_template(messages, 
                                                             add_generation_prompt=True, 
                                                             return_tensors = "pt",
-                                                            return_dict = True).to(device)
+                                                            return_dict = True,
+                                                            reasoning_effort=reasoning_effort).to(device)
 
     def format_instruction(self, messages: Any, prompt_template: str) -> str:
         device = next(self.model_manager.model.parameters()).device
-        formatted_messages = []
-        for message in messages:
-            formatted_messages.append(prompt_template.format(message["instruction"], message["input"], message["output"]))
+        formatted_messages = prompt_template.format(messages["instruction"], messages["input"], "")
         return self.model_manager.tokenizer(formatted_messages,
                                     return_tensors = "pt",
                                     return_dict = True).to(device)
@@ -192,10 +188,10 @@ class Evaluator:
 
     def evaluate_outputs(self, 
                     data_type: str,
-                    messages: Any, 
+                    data: Any, 
                     labels: List[str],
                     generate_args: Optional[Dict[str, Any]] = None) -> str:
-        
+        batch_size = generate_args.get("batch_size", 16)
         max_new_tokens = generate_args.get("max_new_tokens", 128)
         temperature = generate_args.get("temperature", 0.7)
         do_sample = generate_args.get("do_sample", True)
@@ -203,47 +199,66 @@ class Evaluator:
         top_k = generate_args.get("top_k", 50)
         reasoning_effort = generate_args.get("reasoning_effort", None)
         prompt_template = self.config.PROMPT_TEMPLATE
-        
-        if data_type == "chat":
+        if prompt_template is None:
+            prompt_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
             
-            formatted_inputs = self.format_chat(messages, reasoning_effort)
-            answers = []
-            for message in messages:
-                for dict in message:
-                    if dict["role"] == "assistant":
-                        answers.append(dict["content"])
+            ### Instruction:
+            {}
+            
+            ### Input:
+            {}
+            
+            ### Response:
+            {}"""
+        
+        def _format_chat_prompt(examples):
+            convos = examples['messages']
+            if convos and convos[-1]['role'] == 'assistant':
+                convos = convos[:-1]
+            texts = self.format_chat(convos, reasoning_effort)
+            return{"text": texts}
+        
+        def _format_instruction_prompt(examples):
+            texts = self.format_instruction(examples, prompt_template)
+            return{"text": texts}   
+
+        if data_type == "chat":
+            input_ids = data.map(_format_chat_prompt, batched=True)
+            labels = data['messages'][-1]['content']
         elif data_type == "instruction":
-            formatted_inputs = self.format_instruction(messages, prompt_template)
-            answers = []
-            for message in messages:
-                answers.append(message["output"])
+            input_ids = data.map(_format_instruction_prompt, batched=True)
+            labels = [instruction["output"] for instruction in data]
         else:
             raise ValueError(f"Invalid data type: {data_type}")
 
-        outputs = self.model_manager.model.generate(**formatted_inputs, 
-                                                max_new_tokens = max_new_tokens, 
-                                                use_cache = True,
-                                                temperature = temperature,
-                                                do_sample = do_sample,
-                                                top_p = top_p,
-                                                top_k = top_k)
+        loader = DataLoader(input_ids, batch_size=batch_size, shuffle=False)
         
+        all_outputs = []
+        for batch in loader:
+            outputs = self.model_manager.model.generate(**batch, 
+                                                    max_new_tokens = max_new_tokens, 
+                                                    use_cache = True,
+                                                    temperature = temperature,
+                                                    do_sample = do_sample,
+                                                    top_p = top_p,
+                                                    top_k = top_k)
+            all_outputs.extend(outputs)
         
-        predictions = []
-        if data_type == "instruction":
-            decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-            for decoded_output in decoded_outputs:
-                head, sep, tail = decoded_output.rpartition("### Response:")
-                pred = (tail if sep else decoded_output).strip()
-                predictions.append(pred)
-        elif data_type == "chat":
-            sliced_outputs = []
-            for i in range(outputs.size(0)):
-                input_len = (formatted_inputs["input_ids"][i] != self.model_manager.tokenizer.pad_token_id).sum().item()
-                sliced_output = outputs[i, input_len:]
-                sliced_outputs.append(sliced_output)
-            decoded_outputs = self.model_manager.tokenizer.batch_decode(sliced_outputs, skip_special_tokens=True)
-            predictions = decoded_outputs
+            predictions = []
+            if data_type == "instruction":
+                decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                for decoded_output in decoded_outputs:
+                    head, sep, tail = decoded_output.rpartition("### Response:")
+                    pred = (tail if sep else decoded_output).strip()
+                    predictions.append(pred)
+            elif data_type == "chat":
+                sliced_outputs = []
+                for i in range(outputs.size(0)):
+                    input_len = (batch["input_ids"][i] != self.model_manager.tokenizer.pad_token_id).sum().item()
+                    sliced_output = outputs[i, input_len:]
+                    sliced_outputs.append(sliced_output)
+                decoded_outputs = self.model_manager.tokenizer.batch_decode(sliced_outputs, skip_special_tokens=True)
+                predictions = decoded_outputs
 
         def extract_label(text: str, labels_list: Optional[List[str]]) -> str:
                 txt = text.lower().strip()

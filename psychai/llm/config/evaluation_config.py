@@ -28,6 +28,7 @@ class EvaluationConfig:
             
             ### Response:
             {}"""
+    BATCH_SIZE = 16
     OUTPUT_DIR = "results"
     SAVE_SUMMARY = True
     
