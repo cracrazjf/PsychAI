@@ -17,12 +17,15 @@ import ast
 import gc
 import tqdm
 import traceback
+import pandas as pd
 import threading
 from pathlib import Path
+from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from torch.nn.utils.rnn import pad_sequence
 
 try:
     from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -32,6 +35,7 @@ except Exception:  # pragma: no cover - allow usage without sklearn
     confusion_matrix = None
 
 from datasets import load_dataset
+from torch.utils.data import DataLoader
 from ..models import ModelManager
 from transformers import TextIteratorStreamer
 from ..config import EvaluationConfig
@@ -89,6 +93,7 @@ class Evaluator:
 
     def load_model_and_tokenizer(self, model_name: str, model_path: str, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
         self.model_manager.load_model(model_name, model_path, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, full_finetuning=False, dtype=dtype)
+        self.device = next(self.model_manager.model.parameters()).device
         return self.model_manager.model, self.model_manager.tokenizer
 
     # list available datasets in data_root
@@ -131,25 +136,36 @@ class Evaluator:
 
     def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
         data_type = dataset_name.split("_")[-1]
-        data = load_dataset("json", data_files=data_path, split="test")
+        data = load_dataset("json", data_files=data_path, split="train")
         return data, data_type
 
-    def format_chat(self, messages: Any, reasoning_effort: Optional[str] = None) -> str:
-        device = next(self.model_manager.model.parameters()).device
-        if reasoning_effort is None:
-            reasoning_effort = 'low'
-        return self.model_manager.tokenizer.apply_chat_template(messages, 
-                                                            add_generation_prompt=True, 
-                                                            return_tensors = "pt",
-                                                            return_dict = True,
-                                                            reasoning_effort=reasoning_effort).to(device)
+    def format_chat(self, examples: Any, reasoning_effort: Optional[str] = None) -> str:
+        convos = examples["messages"]
+        labels = []
+        texts = []
+        for conv in convos:
+            last_ass = next((m for m in reversed(conv) if m["role"] == "assistant"), None)
+            label = last_ass["content"] if last_ass else ""
 
-    def format_instruction(self, messages: Any, prompt_template: str) -> str:
-        device = next(self.model_manager.model.parameters()).device
-        formatted_messages = prompt_template.format(messages["instruction"], messages["input"], "")
-        return self.model_manager.tokenizer(formatted_messages,
-                                    return_tensors = "pt",
-                                    return_dict = True).to(device)
+            # drop only the final assistant turn; keep history
+            if conv and conv[-1]["role"] == "assistant":
+                conv = conv[:-1]
+            texts.append(self.model_manager.tokenizer.apply_chat_template(conv, tokenize = False,
+                                                                add_generation_prompt=True,
+                                                                reasoning_effort=reasoning_effort))
+            labels.append(label)
+
+        return {"text": texts, "label": labels}
+
+    def format_instruction(self, examples: Any, prompt_template: str) -> str:
+        texts = []
+        labels = []
+        for example in examples:
+            text = prompt_template.format(example["instruction"], example["input"], "")
+            texts.append(text)
+            labels.append(example["output"])
+
+        return {"text": texts, "label": labels}
 
     def chat(self, 
                 messages: List[Dict[str, str]], 
@@ -160,9 +176,13 @@ class Evaluator:
         do_sample = generate_args.get("do_sample", True)
         top_p = generate_args.get("top_p", 0.95)
         top_k = generate_args.get("top_k", 50)
-        reasoning_effort = generate_args.get("reasoning_effort", None)
+        reasoning_effort = generate_args.get("reasoning_effort", 'low')
         
-        formatted_inputs = self.format_chat(messages, reasoning_effort)
+        formatted_inputs = self.model_manager.tokenizer.apply_chat_template(messages, 
+                                                            add_generation_prompt=True, 
+                                                            return_tensors = "pt",
+                                                            return_dict = True,
+                                                            reasoning_effort=reasoning_effort).to(self.device)
         
         streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True)
 
@@ -189,15 +209,15 @@ class Evaluator:
     def evaluate_outputs(self, 
                     data_type: str,
                     data: Any, 
-                    labels: List[str],
+                    labels_list: List[str],
                     generate_args: Optional[Dict[str, Any]] = None) -> str:
-        batch_size = generate_args.get("batch_size", 16)
+        batch_size = self.config.BATCH_SIZE
         max_new_tokens = generate_args.get("max_new_tokens", 128)
         temperature = generate_args.get("temperature", 0.7)
         do_sample = generate_args.get("do_sample", True)
         top_p = generate_args.get("top_p", 0.95)
         top_k = generate_args.get("top_k", 50)
-        reasoning_effort = generate_args.get("reasoning_effort", None)
+        reasoning_effort = generate_args.get("reasoning_effort", 'low')
         prompt_template = self.config.PROMPT_TEMPLATE
         if prompt_template is None:
             prompt_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
@@ -211,54 +231,60 @@ class Evaluator:
             ### Response:
             {}"""
         
-        def _format_chat_prompt(examples):
-            convos = examples['messages']
-            if convos and convos[-1]['role'] == 'assistant':
-                convos = convos[:-1]
-            texts = self.format_chat(convos, reasoning_effort)
-            return{"text": texts}
-        
-        def _format_instruction_prompt(examples):
-            texts = self.format_instruction(examples, prompt_template)
-            return{"text": texts}   
-
         if data_type == "chat":
-            input_ids = data.map(_format_chat_prompt, batched=True)
-            labels = data['messages'][-1]['content']
+            data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
         elif data_type == "instruction":
-            input_ids = data.map(_format_instruction_prompt, batched=True)
-            labels = [instruction["output"] for instruction in data]
+            data = data.map(partial(self.format_instruction, prompt_template=prompt_template), batched=True)
         else:
             raise ValueError(f"Invalid data type: {data_type}")
+        data.set_format(type=None)
 
-        loader = DataLoader(input_ids, batch_size=batch_size, shuffle=False)
+        def collate_for_generate(batch):
+            prompts = [ex["text"] for ex in batch]           # or "prompt" if that’s your field
+            enc = self.model_manager.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+            enc["label"] = [ex["label"] for ex in batch]  # keep labels as a list of strings
+            return enc
+        loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
         
-        all_outputs = []
+        pred_texts = []
+        gold_texts = []
         for batch in loader:
+            labels = batch.pop("label")    
+            batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
-                                                    max_new_tokens = max_new_tokens, 
-                                                    use_cache = True,
-                                                    temperature = temperature,
-                                                    do_sample = do_sample,
-                                                    top_p = top_p,
-                                                    top_k = top_k)
-            all_outputs.extend(outputs)
+                                                        max_new_tokens = max_new_tokens, 
+                                                        use_cache = True,
+                                                        temperature = temperature,
+                                                        do_sample = do_sample,
+                                                        top_p = top_p,
+                                                        top_k = top_k)
+            gold_texts.extend(labels)
         
-            predictions = []
+            pred_texts = []
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                predictions = []
                 for decoded_output in decoded_outputs:
                     head, sep, tail = decoded_output.rpartition("### Response:")
                     pred = (tail if sep else decoded_output).strip()
                     predictions.append(pred)
+                pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_outputs = []
                 for i in range(outputs.size(0)):
-                    input_len = (batch["input_ids"][i] != self.model_manager.tokenizer.pad_token_id).sum().item()
+                    input_len = batch["input_ids"][i].shape[0]
                     sliced_output = outputs[i, input_len:]
                     sliced_outputs.append(sliced_output)
-                decoded_outputs = self.model_manager.tokenizer.batch_decode(sliced_outputs, skip_special_tokens=True)
-                predictions = decoded_outputs
+                pred_texts.extend(self.model_manager.tokenizer.batch_decode(
+                    pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                    skip_special_tokens=True
+                ))
+
+        for i, text in enumerate(pred_texts[:10]):
+            print("="*40, f"Example {i}", "="*40)
+            print("PRED:", repr(text), len(text))     # repr() shows hidden \n etc
+            print("GOLD:", repr(gold_texts[i]))
+            print()
 
         def extract_label(text: str, labels_list: Optional[List[str]]) -> str:
                 txt = text.lower().strip()
@@ -268,8 +294,8 @@ class Evaluator:
                             return lbl
                 return txt.split()[0] if txt else "unknown"
 
-        pred_labels = [extract_label(p, labels) for p in predictions]
-        true_labels = [extract_label(t, labels) for t in answers]
+        pred_labels = [extract_label(p, labels_list) for p in pred_texts]
+        true_labels = [extract_label(t, labels_list) for t in gold_texts]
         
         if accuracy_score is not None and classification_report is not None and confusion_matrix is not None:
             acc = float(accuracy_score(true_labels, pred_labels))
@@ -277,33 +303,23 @@ class Evaluator:
             report = classification_report(true_labels, pred_labels, labels=uniq, output_dict=True, zero_division=0)
             cm = confusion_matrix(true_labels, pred_labels, labels=uniq)
         
+            print("="*50)
+            print(f"Accuracy: {acc:.2%}")
+            print("="*50)
+
+            print("\nClassification report:")
+            print(pd.DataFrame(report).T.round(3))   # precision, recall, f1-score
+
+            print("\nConfusion Matrix:")
+            print(pd.DataFrame(cm, index=uniq, columns=uniq))
+        
         return {
-            "predictions": predictions,
-            "ground_truths": answers,
+            "predictions": pred_texts,
+            "ground_truths": gold_texts,
             "accuracy": acc,
             "classification_report": report,
             "confusion_matrix": cm,
         }
-
-    def print_results(results: Dict[str, Any]) -> None:
-        print("\n📊 Evaluation Results")
-        print("=" * 30)
-        for key in ["total_samples", "processed_samples", "accuracy", "exact_match_accuracy", "avg_prediction_length", "avg_truth_length"]:
-            if key in results:
-                val = results[key]
-                if isinstance(val, float):
-                    print(f"{key}: {val:.4f}")
-                else:
-                    print(f"{key}: {val}")
-
-        # Show a few examples
-        preds = results.get("predictions", [])
-        truths = results.get("ground_truths", [])
-        if preds and truths:
-            print("\n📝 Examples:")
-            for i in range(min(3, len(preds))):
-                print(f"- Pred: {preds[i][:512]}{'...' if len(preds[i]) > 120 else ''}")
-                print(f"  True: {truths[i][:512]}{'...' if len(truths[i]) > 120 else ''}")
 
     def benchmark_text(
         self,
@@ -336,9 +352,9 @@ class Evaluator:
             test_data, data_type = self.load_test_data(dataset_name, data_path)
             results[dataset_name] = {}
             if max_samples:
-                test_data = test_data[:max_samples]
+                test_data = test_data.select(range(max_samples))
             res = self.evaluate_outputs(data_type, test_data, 
-                                        labels=labels_map.get(dataset_name), 
+                                        labels_list=labels_map.get(dataset_name), 
                                         generate_args=generate_args)
             results[dataset_name] = res
 
@@ -386,7 +402,7 @@ class Evaluator:
         for model_name, model_path in selected_models.items():
             self.load_model_and_tokenizer(model_name, model_path, max_seq_length, load_in_4bit, dtype)
             res = self.evaluate_outputs(data_type, test_data, 
-                                        labels=labels, 
+                                        labels_list=labels, 
                                         generate_args=generate_args)
             results[model_name] = res
 
