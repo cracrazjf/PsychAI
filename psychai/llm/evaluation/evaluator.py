@@ -314,8 +314,8 @@ class Evaluator:
             print(pd.DataFrame(cm, index=uniq, columns=uniq))
         
         return {
-            "predictions": pred_texts,
-            "ground_truths": gold_texts,
+            "predictions": pred_labels,
+            "ground_truths": true_labels,
             "accuracy": acc,
             "classification_report": report,
             "confusion_matrix": cm,
