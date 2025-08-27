@@ -365,7 +365,7 @@ class Evaluator:
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "model": model_name,
-                    "datasets": selected_datasets.keys(),
+                    "datasets": list(selected_datasets.keys()),
                     "results": results,
                 }, f, indent=2)
             print(f"💾 Benchmark summary saved to {out_path}")
