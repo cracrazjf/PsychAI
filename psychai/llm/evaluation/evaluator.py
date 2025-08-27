@@ -144,8 +144,7 @@ class Evaluator:
         return self.model_manager.tokenizer.apply_chat_template(messages, 
                                                             add_generation_prompt=True, 
                                                             return_tensors = "pt",
-                                                            return_dict = True,
-                                                            reasoning_effort=reasoning_effort).to(device)
+                                                            return_dict = True).to(device)
 
     def format_instruction(self, messages: Any, prompt_template: str) -> str:
         device = next(self.model_manager.model.parameters()).device
@@ -193,7 +192,7 @@ class Evaluator:
 
     def evaluate_outputs(self, 
                     data_type: str,
-                    conversations: Any, 
+                    messages: Any, 
                     labels: List[str],
                     generate_args: Optional[Dict[str, Any]] = None) -> str:
         
@@ -206,19 +205,18 @@ class Evaluator:
         prompt_template = self.config.PROMPT_TEMPLATE
         
         if data_type == "chat":
-            formatted_inputs = []
+            
+            formatted_inputs = self.format_chat(messages, reasoning_effort)
             answers = []
-            for conversation in conversations:
-                formatted_inputs.append(self.format_chat(conversation["messages"], reasoning_effort))
-                for message in conversation["messages"]:
-                    if message["role"] == "assistant":
-                        answers.append(message["content"])
+            for message in messages:
+                for dict in message:
+                    if dict["role"] == "assistant":
+                        answers.append(dict["content"])
         elif data_type == "instruction":
-            formatted_inputs = []
+            formatted_inputs = self.format_instruction(messages, prompt_template)
             answers = []
-            for conversation in conversations:
-                formatted_inputs.append(self.format_instruction(conversation, prompt_template))
-                answers.append(conversation["output"])
+            for message in messages:
+                answers.append(message["output"])
         else:
             raise ValueError(f"Invalid data type: {data_type}")
 
