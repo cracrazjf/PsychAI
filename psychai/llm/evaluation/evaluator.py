@@ -335,7 +335,8 @@ class Evaluator:
         pred_texts = []
         gold_texts = []
         think_texts = []
-        for batch in loader:
+        tqdm_loader = tqdm(loader, desc="Evaluating")
+        for batch in tqdm_loader:
             labels = batch.pop("label")    
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
@@ -492,7 +493,7 @@ class Evaluator:
         self,
         dataset_name: str,
         model_names: Union[List[str], str],
-        reasoning: bool,
+        reasoning_map: Dict[str, bool],
         labels: List[str],
         max_samples: Optional[int] = None,
         max_seq_length: Optional[int] = None,
@@ -517,7 +518,7 @@ class Evaluator:
             test_data = test_data[:max_samples]
             
         for model_name, model_path in selected_models.items():
-            self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
+            self.load_model_and_tokenizer(model_name, model_path, reasoning_map[model_name], max_seq_length, load_in_4bit, dtype)
             res = self.evaluate_outputs(data_type, test_data, 
                                         labels_list=labels, 
                                         generate_args=generate_args)
@@ -648,12 +649,13 @@ class Evaluator:
 
             if user == "compare":
                 model_names = input("Models (comma or 'all'): ").strip()
-                reasoning = input("Is the model reasoning? (y/n): ").strip()
-                reasoning = reasoning.lower() == "y"
                 if model_names == "all":
                     model_names = list(models.keys())
                 else:
                     model_names = [m.strip() for m in model_names.split(",")]
+                reasoning_map = {}
+                for model_name in model_names:
+                    reasoning_map[model_name] = input(f"Is the model {model_name} reasoning? (y/n): ").strip().lower() == "y"
                 dataset_name = input("Dataset: ").strip()
                 max_samples = input("Num samples: ").strip()
                 max_samples = int(max_samples) if max_samples else None
@@ -667,7 +669,7 @@ class Evaluator:
                         print("You must enter labels for the dataset")
 
                 generate_args = _get_generate_args()
-                self.compare_text(dataset_name, model_names, reasoning, labels, max_samples=max_samples, generate_args=generate_args)
+                self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, generate_args=generate_args)
                 continue
 
             print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
