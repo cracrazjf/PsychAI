@@ -1,28 +1,15 @@
-"""
-Text-focused evaluation utilities
-
-Simple, minimal evaluator for text models with:
-- Interactive chat
-- Benchmark across multiple models and datasets
-- Model comparison on a dataset
-
-Audio/vision evaluators can follow the same interface later.
-"""
-
 from __future__ import annotations
 
 import os
 import json
 import ast
 import re
-import gc
 from tqdm import tqdm
-import traceback
 import pandas as pd
 import threading
 from pathlib import Path
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -475,6 +462,20 @@ class Evaluator:
                                         generate_args=generate_args)
             results[dataset_name] = res
 
+        
+        print(f"\n{'='*20} BENCHMARK SUMMARY {'='*20}")
+        print(f"Model: {model_name}")
+        print("-" * 40)
+        for dataset_name in selected_datasets.keys():
+            print(f"\n📊 Dataset: {dataset_name}")
+            print("-" * 40)
+            
+            accuracy = results[dataset_name].get("accuracy", None)
+            if accuracy is not None:
+                print(f"  {dataset_name:20s}: {accuracy:.2%}")
+            else:
+                print(f"  {dataset_name:20s}: Failed")
+
         if save_summary:
             out_dir = Path(output_path)
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -521,6 +522,20 @@ class Evaluator:
                                         labels_list=labels, 
                                         generate_args=generate_args)
             results[model_name] = res
+
+        print(f"\n{'='*20} COMPARISON SUMMARY {'='*20}")
+        print(f"Dataset: {dataset_name}")
+        print("-" * 40)
+
+        sorted_results = sorted(results.items(), key=lambda x: x[1].get("accuracy", 0), reverse=True)
+        for model_name, result in sorted_results:
+            print(f"\n📊 Model: {model_name}")
+            print("-" * 40)
+            accuracy = result.get("accuracy", None)
+            if accuracy is not None:
+                print(f"  {model_name:20s}: {accuracy:.2%}")
+            else:
+                print(f"  {model_name:20s}: Failed")
 
         if save_summary:
             out_dir = Path(output_path)
