@@ -16,7 +16,7 @@ import json
 import ast
 import re
 import gc
-import tqdm
+from tqdm import tqdm
 import traceback
 import pandas as pd
 import threading
