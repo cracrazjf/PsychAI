@@ -207,43 +207,79 @@ class Evaluator:
             print(s, end="", flush=True)
 
         def stream_with_labels(chunks, analysis_re, final_re, to_user):
-            buf = ""
-            in_final = False
-            analysis_printed = False
             analysis_open = analysis_re.split("(.*?)")[0].replace("\\", "")
             analysis_close = analysis_re.split("(.*?)")[1].replace("\\", "")
             final_open = final_re.split("(.*?)")[0].replace("\\", "")
             final_close = final_re.split("(.*?)")[1].replace("\\", "")
+            buf = ""
+            mode = None                # None | "analysis" | "final"
+            printed_thinking_hdr = False
+            printed_model_hdr = False
+            tail_keep = max(len(analysis_open), len(analysis_close),
+                            len(final_open),   len(final_close)) - 1
+
+            def write_thinking(s):
+                nonlocal printed_thinking_hdr
+                if not s: return
+                if not printed_thinking_hdr:
+                    to_user("Thinking: ")
+                    printed_thinking_hdr = True
+                to_user(s)
+
+            def write_model(s):
+                nonlocal printed_model_hdr
+                if not s: return
+                if not printed_model_hdr:
+                    to_user("Model: ")
+                    printed_model_hdr = True
+                to_user(s)
 
             for chunk in chunks:
                 buf += chunk
+                while True:
+                    if mode is None:
+                        ai = buf.find(analysis_open)
+                        fi = buf.find(final_open)
+                        if ai == fi == -1:
+                            # keep a tiny tail so split markers across chunks are detected
+                            if len(buf) > tail_keep:
+                                buf = buf[-tail_keep:]
+                            break
+                        if ai != -1 and (fi == -1 or ai < fi):
+                            buf = buf[ai + len(analysis_open):]
+                            mode = "analysis"
+                        else:
+                            buf = buf[fi + len(final_open):]
+                            mode = "final"
+                    elif mode == "analysis":
+                        ci = buf.find(analysis_close)
+                        if ci == -1:
+                            # stream most of buf as thinking; keep a tail for boundary
+                            if len(buf) > tail_keep:
+                                write_thinking(buf[:-tail_keep])
+                                buf = buf[-tail_keep:]
+                            break
+                        else:
+                            write_thinking(buf[:ci])
+                            buf = buf[ci + len(analysis_close):]
+                            mode = None
+                    else:  # mode == "final"
+                        ci = buf.find(final_close)
+                        if ci == -1:
+                            if len(buf) > tail_keep:
+                                write_model(buf[:-tail_keep])
+                                buf = buf[-tail_keep:]
+                            break
+                        else:
+                            write_model(buf[:ci])
+                            return  # finished cleanly
 
-                # Print analysis section once it closes
-                if not analysis_printed:
-                    start = buf.find(analysis_open)
-                    end = buf.find(analysis_close)
-                    if start != -1 and end != -1 and end > start:
-                        analysis_text = buf[start + len(analysis_open):end]
-                        to_user(f"\nThinking: {analysis_text.strip()}\n")
-                        buf = buf[end + len(analysis_close):]
-                        analysis_printed = True
+            # End of stream fallbacks
+            if mode == "analysis" and buf:
+                write_thinking(buf)
+            elif mode == "final" and buf:
+                write_model(buf)
 
-                # Once final section starts, stream it live
-                if not in_final:
-                    pos = buf.find(final_open)
-                    if pos != -1:
-                        buf = buf[pos + len(final_open):]
-                        to_user("\nModel: ",)   # heading once
-                        in_final = True
-
-                if in_final:
-                    pos = buf.find(final_close)
-                    if pos != -1:
-                        to_user(buf[:pos])
-                        break
-                    else:
-                        to_user(buf)
-                        buf = ""
         thread = threading.Thread(target=generate_response)
         thread.start()
         if self.model_manager.reasoning:
