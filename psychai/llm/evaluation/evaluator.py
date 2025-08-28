@@ -168,6 +168,12 @@ class Evaluator:
 
         return {"text": texts, "label": labels}
 
+    def get_analysis_and_final_re(self) -> Tuple[str, str]:
+        if self.model_manager.model_company == "gpt":
+            analysis_re = r"<\|channel\|>analysis<\|message\|>(.*?)<\|end\|>"
+            final_re = r"<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)<\|return\|>"
+        return analysis_re, final_re
+    
     def chat(self, 
                 messages: List[Dict[str, str]], 
                 generate_args: Optional[Dict[str, Any]] = None) -> str:
@@ -184,8 +190,6 @@ class Evaluator:
                                                             return_tensors = "pt",
                                                             return_dict = True,
                                                             reasoning_effort=reasoning_effort).to(self.device)
-        
-        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True)
 
         def generate_response():
             with torch.no_grad():
@@ -199,11 +203,58 @@ class Evaluator:
                     top_k=top_k,
                 )
         
+        def to_user(s):
+            print(s, end="", flush=True)
+
+        def stream_with_labels(chunks, analysis_re, final_re, to_user):
+            buf = ""
+            in_final = False
+            analysis_printed = False
+            analysis_open = analysis_re.split("(.*?)")[0].replace("\\", "")
+            analysis_close = analysis_re.split("(.*?)")[1].replace("\\", "")
+            final_open = final_re.split("(.*?)")[0].replace("\\", "")
+            final_close = final_re.split("(.*?)")[1].replace("\\", "")
+
+            for chunk in chunks:
+                buf += chunk
+
+                # Print analysis section once it closes
+                if not analysis_printed:
+                    start = buf.find(analysis_open)
+                    end = buf.find(analysis_close)
+                    if start != -1 and end != -1 and end > start:
+                        analysis_text = buf[start + len(analysis_open):end]
+                        to_user(f"\nThinking: {analysis_text.strip()}\n")
+                        buf = buf[end + len(analysis_close):]
+                        analysis_printed = True
+
+                # Once final section starts, stream it live
+                if not in_final:
+                    pos = buf.find(final_open)
+                    if pos != -1:
+                        buf = buf[pos + len(final_open):]
+                        to_user("\nModel: ",)   # heading once
+                        in_final = True
+
+                if in_final:
+                    pos = buf.find(final_close)
+                    if pos != -1:
+                        to_user(buf[:pos])
+                        break
+                    else:
+                        to_user(buf)
+                        buf = ""
         thread = threading.Thread(target=generate_response)
         thread.start()
-        print("Model: ", end="", flush=True)
-        for new_text in streamer:
-            print(new_text, end="", flush=True)
+        if self.model_manager.reasoning:
+            analysis_re, final_re = self.get_analysis_and_final_re()
+            streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=False)
+            stream_with_labels(streamer, analysis_re, final_re, to_user)
+        else:
+            streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
+            print("Model: ", end="", flush=True)
+            for new_text in streamer:
+                print(new_text, end="", flush=True)
         thread.join()
         print()
 
@@ -249,6 +300,7 @@ class Evaluator:
         
         pred_texts = []
         gold_texts = []
+        think_texts = []
         for batch in loader:
             labels = batch.pop("label")    
             batch = {k: v.to(self.device) for k, v in batch.items()}
@@ -261,8 +313,6 @@ class Evaluator:
                                                         top_k = top_k)
             gold_texts.extend(labels)
         
-            pred_texts = []
-            think_texts = []
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 predictions = []
@@ -283,21 +333,24 @@ class Evaluator:
                         pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
                         skip_special_tokens=False
                     )
-                    ANALYSIS_RE = re.compile(generate_args.get("analysis_re"), re.DOTALL | re.IGNORECASE)
-                    FINAL_RE = re.compile(generate_args.get("final_re"), re.DOTALL | re.IGNORECASE)
+                    analysis_re, final_re = self.get_analysis_and_final_re()
                     pred_text_batch = []
                     think_text_batch = []
                     for text in pred_text:
+                        ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
+                        FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
                         analysis_match = ANALYSIS_RE.search(text)
                         final_match = FINAL_RE.search(text)
                         if analysis_match:
                             think_text_batch.append(analysis_match.group(1).strip())
-                        elif final_match:
-                            pred_text_batch.append(final_match.group(1).strip())
+                            if final_match:
+                                pred_text_batch.append(final_match.group(1).strip())
+                            else:
+                                pred_text_batch.append(text)
                         else:
+                            think_text_batch.append("")
                             pred_text_batch.append(text)
-                    if len(think_text_batch) > 0:
-                        assert len(think_text_batch) == len(pred_text_batch)
+
                     think_texts.extend(think_text_batch)
                     pred_texts.extend(pred_text_batch)
                 else:
@@ -306,13 +359,14 @@ class Evaluator:
                         skip_special_tokens=True
                     )
                     pred_texts.extend(pred_text)
+
         for i, text in enumerate(pred_texts[:10]):
-            print("="*40, f"Example {i}", "="*40)
-            print("PRED:", repr(text))
-            if len(think_texts) > 0:
-                print("THINK:", repr(think_texts[i]))
-            print("LABEL:", repr(gold_texts[i]))
-            print()
+                print("="*40, f"Example {i}", "="*40)
+                print("PRED:", text)
+                if len(think_texts) > 0:
+                    print("THINK:", think_texts[i])
+                print("GOLD:", gold_texts[i])
+                print()
 
         def extract_label(text: str, labels_list: Optional[List[str]]) -> str:
                 txt = text.lower().strip()

@@ -24,7 +24,8 @@ class ModelManager:
         self.model = None
         self.model_name = None
         self.tokenizer = None
-        self.reasoning = None   
+        self.reasoning = None  
+        self.model_companies = ['llama', 'gpt', 'deepseek', 'qwen', 'mistral', 'gemma'] 
     def load_model(self, model_name: str, model_path: str, reasoning: bool,
                    use_unsloth: bool, for_training: bool,
                    max_seq_length: int, load_in_4bit: bool,
@@ -32,6 +33,12 @@ class ModelManager:
         self.free_memory()
         
         self.model_name = model_name
+        for company in self.model_companies:
+            if company in model_name:
+                self.model_company = company
+                break
+        else:
+            self.model_company = None
         self.reasoning = reasoning
         if use_unsloth and UNSLOTH_AVAILABLE:
             self.model, self.tokenizer = load_model_unsloth(
