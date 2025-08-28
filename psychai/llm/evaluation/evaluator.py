@@ -496,9 +496,7 @@ class Evaluator:
         reasoning_map: Dict[str, bool],
         labels: List[str],
         max_samples: Optional[int] = None,
-        max_seq_length: Optional[int] = None,
-        load_in_4bit: Optional[bool] = None,
-        dtype: Optional[str] = None,
+        model_args_map: Optional[Dict] = None,
         generate_args: Optional[Dict[str, Any]] = None,
         save_summary: Optional[bool] = None,
         output_path: Optional[str] = None,
@@ -508,16 +506,16 @@ class Evaluator:
         selected_dataset = self.select_datasets(dataset_name)
 
         test_data, data_type = self.load_test_data(dataset_name, selected_dataset[dataset_name])
-        max_seq_length = max_seq_length or self.config.MAX_SEQ_LENGTH
-        load_in_4bit = load_in_4bit or self.config.LOAD_IN_4BIT
-        dtype = dtype or self.config.DTYPE
         generate_args = generate_args or self.config.GENERATE_ARGS
 
         results = {}
         if max_samples:
-            test_data = test_data[:max_samples]
-            
+            test_data = test_data.select(range(max_samples))
         for model_name, model_path in selected_models.items():
+            model_args = model_args_map.get(model_name, {})
+            max_seq_length = model_args.get("max_seq_length", self.config.MAX_SEQ_LENGTH)
+            load_in_4bit = model_args.get("load_in_4bit", self.config.LOAD_IN_4BIT)
+            dtype = model_args.get("dtype", self.config.DTYPE)
             self.load_model_and_tokenizer(model_name, model_path, reasoning_map[model_name], max_seq_length, load_in_4bit, dtype)
             res = self.evaluate_outputs(data_type, test_data, 
                                         labels_list=labels, 
@@ -623,6 +621,9 @@ class Evaluator:
                 model_name = input("Model: ").strip()
                 reasoning = input("Is the model reasoning? (y/n): ").strip()
                 reasoning = reasoning.lower() == "y"
+                max_seq_length = input("Enter max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
+                load_in_4bit = input("Enter load_in_4bit(empty for default): ").strip() or self.config.LOAD_IN_4BIT
+                dtype = input("Enter dtype(empty for default): ").strip() or self.config.DTYPE
                 dataset_names = input("Datasets (comma or 'all'): ").strip()
                 if dataset_names == "all":
                     dataset_names = list(datasets.keys())
@@ -644,7 +645,13 @@ class Evaluator:
 
                 generate_args = _get_generate_args()
 
-                self.benchmark_text(model_name, dataset_names, labels_map, reasoning, max_samples=max_samples, generate_args=generate_args)
+                self.benchmark_text(model_name, dataset_names, 
+                                    labels_map, reasoning, 
+                                    max_samples=max_samples, 
+                                    max_seq_length=max_seq_length, 
+                                    load_in_4bit=load_in_4bit, 
+                                    dtype=dtype, 
+                                    generate_args=generate_args)
                 continue
 
             if user == "compare":
@@ -654,8 +661,17 @@ class Evaluator:
                 else:
                     model_names = [m.strip() for m in model_names.split(",")]
                 reasoning_map = {}
+                model_args_map = {}
                 for model_name in model_names:
                     reasoning_map[model_name] = input(f"Is the model {model_name} reasoning? (y/n): ").strip().lower() == "y"
+                    max_seq_length = input(f"Enter max_seq_length for {model_name}(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
+                    load_in_4bit = input(f"Enter load_in_4bit for {model_name}(empty for default): ").strip() or self.config.LOAD_IN_4BIT
+                    dtype = input(f"Enter dtype for {model_name}(empty for default): ").strip() or self.config.DTYPE
+                    model_args_map[model_name] = {  
+                        "max_seq_length": max_seq_length,
+                        "load_in_4bit": load_in_4bit,
+                        "dtype": dtype,
+                    }
                 dataset_name = input("Dataset: ").strip()
                 max_samples = input("Num samples: ").strip()
                 max_samples = int(max_samples) if max_samples else None
@@ -669,7 +685,7 @@ class Evaluator:
                         print("You must enter labels for the dataset")
 
                 generate_args = _get_generate_args()
-                self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, generate_args=generate_args)
+                self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
                 continue
 
             print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
