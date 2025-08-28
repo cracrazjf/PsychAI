@@ -29,6 +29,7 @@ class TrainingConfig:
     # Model
     USE_UNSLOTH = True
     MODEL_NAME = None
+    REASONING = False
     CHAT_TEMPLATE = None
     FULL_FINETUNING = False
     LOAD_IN_4BIT = True

@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import json
 import ast
+import re
 import gc
 import tqdm
 import traceback
@@ -91,8 +92,8 @@ class Evaluator:
 
         return selected_models
 
-    def load_model_and_tokenizer(self, model_name: str, model_path: str, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
-        self.model_manager.load_model(model_name, model_path, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, full_finetuning=False, dtype=dtype)
+    def load_model_and_tokenizer(self, model_name: str, model_path: str, reasoning: bool, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
+        self.model_manager.load_model(model_name, model_path, reasoning, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, full_finetuning=False, dtype=dtype)
         self.device = next(self.model_manager.model.parameters()).device
         return self.model_manager.model, self.model_manager.tokenizer
 
@@ -261,6 +262,7 @@ class Evaluator:
             gold_texts.extend(labels)
         
             pred_texts = []
+            think_texts = []
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 predictions = []
@@ -275,15 +277,41 @@ class Evaluator:
                     input_len = batch["input_ids"][i].shape[0]
                     sliced_output = outputs[i, input_len:]
                     sliced_outputs.append(sliced_output)
-                pred_texts.extend(self.model_manager.tokenizer.batch_decode(
-                    pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-                    skip_special_tokens=True
-                ))
-
+                
+                if self.model_manager.reasoning:
+                    pred_text = self.model_manager.tokenizer.batch_decode(
+                        pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        skip_special_tokens=False
+                    )
+                    ANALYSIS_RE = re.compile(generate_args.get("analysis_re"), re.DOTALL | re.IGNORECASE)
+                    FINAL_RE = re.compile(generate_args.get("final_re"), re.DOTALL | re.IGNORECASE)
+                    pred_text_batch = []
+                    think_text_batch = []
+                    for text in pred_text:
+                        analysis_match = ANALYSIS_RE.search(text)
+                        final_match = FINAL_RE.search(text)
+                        if analysis_match:
+                            think_text_batch.append(analysis_match.group(1).strip())
+                        elif final_match:
+                            pred_text_batch.append(final_match.group(1).strip())
+                        else:
+                            pred_text_batch.append(text)
+                    if len(think_text_batch) > 0:
+                        assert len(think_text_batch) == len(pred_text_batch)
+                    think_texts.extend(think_text_batch)
+                    pred_texts.extend(pred_text_batch)
+                else:
+                    pred_text = self.model_manager.tokenizer.batch_decode(
+                        pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        skip_special_tokens=True
+                    )
+                    pred_texts.extend(pred_text)
         for i, text in enumerate(pred_texts[:10]):
             print("="*40, f"Example {i}", "="*40)
-            print("PRED:", repr(text), len(text))     # repr() shows hidden \n etc
-            print("GOLD:", repr(gold_texts[i]))
+            print("PRED:", repr(text))
+            if len(think_texts) > 0:
+                print("THINK:", repr(think_texts[i]))
+            print("LABEL:", repr(gold_texts[i]))
             print()
 
         def extract_label(text: str, labels_list: Optional[List[str]]) -> str:
@@ -326,6 +354,7 @@ class Evaluator:
         model_name: str,
         dataset_names: Union[List[str], str],
         labels_map: Dict[str, Any],
+        reasoning: bool,
         max_samples: Optional[int] = None,
         max_seq_length: Optional[int] = None,
         load_in_4bit: Optional[bool] = None,
@@ -338,7 +367,6 @@ class Evaluator:
         selected_model = self.select_models(model_name)
         selected_datasets = self.select_datasets(dataset_names)
         model_path = selected_model.get(model_name, model_name)
-
         results= {}
 
         max_seq_length = max_seq_length or self.config.MAX_SEQ_LENGTH
@@ -346,7 +374,7 @@ class Evaluator:
         dtype = dtype or self.config.DTYPE
         generate_args = generate_args or self.config.GENERATE_ARGS
 
-        self.load_model_and_tokenizer(model_name, model_path, max_seq_length, load_in_4bit, dtype)
+        self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
 
         for dataset_name, data_path in selected_datasets.items():
             test_data, data_type = self.load_test_data(dataset_name, data_path)
@@ -376,6 +404,7 @@ class Evaluator:
         self,
         dataset_name: str,
         model_names: Union[List[str], str],
+        reasoning: bool,
         labels: List[str],
         max_samples: Optional[int] = None,
         max_seq_length: Optional[int] = None,
@@ -400,7 +429,7 @@ class Evaluator:
             test_data = test_data[:max_samples]
             
         for model_name, model_path in selected_models.items():
-            self.load_model_and_tokenizer(model_name, model_path, max_seq_length, load_in_4bit, dtype)
+            self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
             res = self.evaluate_outputs(data_type, test_data, 
                                         labels_list=labels, 
                                         generate_args=generate_args)
@@ -463,12 +492,14 @@ class Evaluator:
                 continue
 
             if user.startswith("switch "):
+                reasoning = input("Is the model reasoning? (y/n): ").strip()
+                reasoning = reasoning.lower() == "y"
                 max_seq_length = input("Enter max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
                 load_in_4bit = input("Enter load_in_4bit(empty for default): ").strip() or self.config.LOAD_IN_4BIT
                 dtype = input("Enter dtype(empty for default): ").strip() or self.config.DTYPE
                 model_name = user.split(" ", 1)[1].strip()
                 model_path = models.get(model_name, model_name)
-                self.load_model_and_tokenizer(model_name, model_path, max_seq_length, load_in_4bit, dtype)
+                self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
                 print(f"🔄 Switched to: {model_name}")
                 continue
 

@@ -26,6 +26,7 @@ class Trainer:
         model_path = self.config.MODEL_PATH
         use_unsloth = self.config.USE_UNSLOTH
         apply_lora = self.config.APPLY_LORA
+        reasoning = self.config.REASONING
 
         chat_template = self.config.CHAT_TEMPLATE
 
@@ -35,6 +36,7 @@ class Trainer:
         self.model_manager.load_model(
             model_name=model_name,
             model_path=model_path,
+            reasoning=reasoning,
             use_unsloth=use_unsloth,
             for_training=True,
             max_seq_length=self.config.MAX_SEQ_LENGTH,

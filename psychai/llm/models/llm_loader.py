@@ -24,13 +24,15 @@ class ModelManager:
         self.model = None
         self.model_name = None
         self.tokenizer = None
-    def load_model(self, model_name: str, model_path: str, 
+        self.reasoning = None   
+    def load_model(self, model_name: str, model_path: str, reasoning: bool,
                    use_unsloth: bool, for_training: bool,
                    max_seq_length: int, load_in_4bit: bool,
                    full_finetuning: bool, dtype: str):
         self.free_memory()
         
         self.model_name = model_name
+        self.reasoning = reasoning
         if use_unsloth and UNSLOTH_AVAILABLE:
             self.model, self.tokenizer = load_model_unsloth(
                 model_name=model_name,
@@ -105,6 +107,7 @@ class ModelManager:
         gc.collect()
         torch.cuda.empty_cache()
         self.model = None
+        self.reasoning = None
         self.tokenizer = None
         self.model_name = None
         print("✅ Cache cleared")

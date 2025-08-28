@@ -17,6 +17,8 @@ class EvaluationConfig:
         "top_p": 0.95,
         "top_k": 50,
         "reasoning_effort": None,
+        "analysis_re": r"<\|channel\|>\s*analysis\s*<\|message\|>(.*?)<\|end\|>",
+        "final_re": r"<\|start\|>\s*assistant\s*<\|channel\|>\s*final\s*<\|message\|>(.*?)<\|return\|>",
     }
     PROMPT_TEMPLATE = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
             
