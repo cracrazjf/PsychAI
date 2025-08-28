@@ -190,7 +190,7 @@ class Evaluator:
                                                             return_tensors = "pt",
                                                             return_dict = True,
                                                             reasoning_effort=reasoning_effort).to(self.device)
-
+        streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=not self.model_manager.reasoning)
         def generate_response():
             with torch.no_grad():
                 self.model_manager.model.generate(
@@ -248,10 +248,8 @@ class Evaluator:
         thread.start()
         if self.model_manager.reasoning:
             analysis_re, final_re = self.get_analysis_and_final_re()
-            streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=False)
             stream_with_labels(streamer, analysis_re, final_re, to_user)
         else:
-            streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=True)
             print("Model: ", end="", flush=True)
             for new_text in streamer:
                 print(new_text, end="", flush=True)

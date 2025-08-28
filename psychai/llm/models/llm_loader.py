@@ -58,6 +58,7 @@ class ModelManager:
                 dtype=dtype,
                 for_training=for_training
             )
+        print(f"🚀 Loaded {model_name} from {self.model_company}")
 
     def apply_chat_template(self, chat_template: str):
         self.tokenizer = get_chat_template(
