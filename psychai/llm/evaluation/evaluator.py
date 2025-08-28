@@ -230,7 +230,7 @@ class Evaluator:
                 nonlocal printed_model_hdr
                 if not s: return
                 if not printed_model_hdr:
-                    to_user("Model: ")
+                    to_user("\nModel: ")
                     printed_model_hdr = True
                 to_user(s)
 
@@ -620,6 +620,8 @@ class Evaluator:
 
             if user == "benchmark":
                 model_name = input("Model: ").strip()
+                reasoning = input("Is the model reasoning? (y/n): ").strip()
+                reasoning = reasoning.lower() == "y"
                 dataset_names = input("Datasets (comma or 'all'): ").strip()
                 if dataset_names == "all":
                     dataset_names = list(datasets.keys())
@@ -641,11 +643,13 @@ class Evaluator:
 
                 generate_args = _get_generate_args()
 
-                self.benchmark_text(model_name, dataset_names, labels_map, max_samples=max_samples, generate_args=generate_args)
+                self.benchmark_text(model_name, dataset_names, labels_map, reasoning, max_samples=max_samples, generate_args=generate_args)
                 continue
 
             if user == "compare":
                 model_names = input("Models (comma or 'all'): ").strip()
+                reasoning = input("Is the model reasoning? (y/n): ").strip()
+                reasoning = reasoning.lower() == "y"
                 if model_names == "all":
                     model_names = list(models.keys())
                 else:
@@ -663,7 +667,7 @@ class Evaluator:
                         print("You must enter labels for the dataset")
 
                 generate_args = _get_generate_args()
-                self.compare_text(dataset_name, model_names, labels, max_samples=max_samples, generate_args=generate_args)
+                self.compare_text(dataset_name, model_names, reasoning, labels, max_samples=max_samples, generate_args=generate_args)
                 continue
 
             print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
