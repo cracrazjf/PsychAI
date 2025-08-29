@@ -34,7 +34,7 @@ class ModelManager:
         
         self.model_name = model_name
         for company in self.model_companies:
-            if company in model_name:
+            if company in model_name.lower():
                 self.model_company = company
                 break
         else:

@@ -83,4 +83,10 @@ class TrainingConfig:
         for k, v in overrides.items():
             setattr(self, k, v)
 
+    def create_directories(self):
+        os.makedirs(self.OUTPUT_DIR, exist_ok=True)
+        print(f"Output directory created: {self.OUTPUT_DIR}")
+        os.makedirs(self.LOGGING_DIR, exist_ok=True)
+        print(f"Logging directory created: {self.LOGGING_DIR}")
+
 
