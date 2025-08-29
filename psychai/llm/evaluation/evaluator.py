@@ -676,6 +676,7 @@ class Evaluator:
                 max_samples = int(max_samples) if max_samples else None
 
                 generate_args = _get_generate_args()
+                print(f"😎 Evaluating the model {model_name} on the datasets {dataset_names}...")
 
                 self.benchmark_text(model_name, dataset_names, 
                                     labels_map, reasoning, 
@@ -687,6 +688,7 @@ class Evaluator:
                 continue
 
             if user == "compare":
+                print("🎮 The compare command is used to compare the performance of multiple models on a single dataset.")
                 model_names = input("Please enter the models (separated by comma or 'all'): ").strip()
                 if model_names == "all":
                     model_names = list(models.keys())
@@ -717,6 +719,7 @@ class Evaluator:
                         print("You must enter labels for the dataset")
 
                 generate_args = _get_generate_args()
+                print(f"😎 Comparing the models {model_names} on the dataset {dataset_name}...")
                 self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
                 continue
 
