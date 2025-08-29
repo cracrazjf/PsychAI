@@ -247,7 +247,7 @@ def create_dataloader(config: TrainingConfig,
     
     train_dataset = ImageDataset(train_data, train_transform, config)
     eval_dataset = ImageDataset(eval_data, eval_transform, config) if eval_data is not None else None
-    print(f"Found {len(train_dataset)} numbers of train data, Found{len(eval_dataset)} numbers of eval data)
+    print(f"Found {len(train_dataset)} numbers of train data, Found {len(eval_dataset)} numbers of eval data")
 
     if pin_memory is None:
         pin_memory = torch.cuda.is_available() 

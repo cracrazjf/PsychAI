@@ -1,6 +1,7 @@
 from typing import Any, Tuple, Optional
 from datasets import Dataset, load_dataset
 from ..models import ModelManager
+import os
 from trl import SFTTrainer, SFTConfig
 
 class Trainer:
@@ -233,10 +234,10 @@ class Trainer:
     def save_model(self):
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H")
+        save_path = self.config.MODELS_PATH + "/" + self.model_manager.model_name + "_" +self.config.DATA_NAME + "_" +timestamp
+        os.makedirs(save_path, exist_ok=True)
         if self.trainer is None:
             raise ValueError("No trainer available. Train the model first.")
-        if self.config.MODEL_SAVE_PATH is not None:
-            save_path = self.config.MODEL_SAVE_PATH
-            self.model_manager.tokenizer.save_pretrained(save_path)
-            self.model_manager.model.save_pretrained(save_path)
-            print(f"💾 Lora model saved to: {save_path}")
+        self.model_manager.tokenizer.save_pretrained(save_path)
+        self.model_manager.model.save_pretrained(save_path)
+        print(f"💾 Lora model saved to: {save_path}")
