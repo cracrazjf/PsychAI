@@ -228,7 +228,7 @@ class Trainer:
         self.save_model()
         print("✅ Training completed!")
         
-        return self.model
+        return self.model_manager.model, self.model_manager.tokenizer
     
     def save_model(self):
         from datetime import datetime

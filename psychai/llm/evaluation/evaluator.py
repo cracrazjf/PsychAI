@@ -572,7 +572,7 @@ class Evaluator:
 
         print("\n🎮 Welcome to PSYCHAI Interactive Text Evaluation")
         print("You can load/switch between models by using 'switch <model_name>'.")
-        print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | quit")
+        print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
 
         while True:
             try:
@@ -584,6 +584,10 @@ class Evaluator:
             if user in ("quit", "exit", "q"):
                 print("👋 Bye")
                 break
+
+            if user == "help":
+                print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
+                continue
 
             if user == "models":
                 print("Models:", ", ".join(models.keys()) or "(none)")
