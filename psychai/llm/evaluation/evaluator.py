@@ -209,7 +209,7 @@ class Evaluator:
                 nonlocal printed_thinking_hdr
                 if not s: return
                 if not printed_thinking_hdr:
-                    to_user("Thinking: ")
+                    to_user("\n💭 Thinking: ")
                     printed_thinking_hdr = True
                 to_user(s)
 
@@ -217,7 +217,7 @@ class Evaluator:
                 nonlocal printed_model_hdr
                 if not s: return
                 if not printed_model_hdr:
-                    to_user("\nModel: ")
+                    to_user("\n🤖 Model: ")
                     printed_model_hdr = True
                 to_user(s)
 
@@ -273,7 +273,7 @@ class Evaluator:
             analysis_re, final_re = self.get_analysis_and_final_re()
             stream_with_labels(streamer, analysis_re, final_re, to_user)
         else:
-            print("Model: ", end="", flush=True)
+            print("\n🤖 Model: ", end="", flush=True)
             for new_text in streamer:
                 print(new_text, end="", flush=True)
         thread.join()
@@ -565,6 +565,13 @@ class Evaluator:
             generate_args["top_p"] = input("Enter top_p(empty for default): ").strip() or default_generate_args["top_p"]
             generate_args["top_k"] = input("Enter top_k(empty for default): ").strip() or default_generate_args["top_k"]
             generate_args["reasoning_effort"] = input("Enter reasoning_effort(empty for default): ").strip() or default_generate_args["reasoning_effort"]
+            print(f"🔍 This model will use the following generate args: ")
+            print(f"max_new_tokens: {generate_args['max_new_tokens']}")
+            print(f"temperature: {generate_args['temperature']}")
+            print(f"do_sample: {generate_args['do_sample']}")
+            print(f"top_p: {generate_args['top_p']}")
+            print(f"top_k: {generate_args['top_k']}")
+            print(f"reasoning_effort: {generate_args['reasoning_effort']}")
             return generate_args
 
         if not models:
@@ -576,25 +583,27 @@ class Evaluator:
 
         while True:
             try:
-                user = input("\n> ").strip()
+                user = input("\n🤩 Hello, Welcome to PSYCHAI, please enter your command: ").strip()
             except KeyboardInterrupt:
-                print("\n👋 Bye")
+                print("\n👋 Bye! See you next time!")
                 break
 
             if user in ("quit", "exit", "q"):
-                print("👋 Bye")
+                print("👋 Bye! See you next time!")
                 break
 
             if user == "help":
-                print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
+                print("💡 Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
                 continue
 
             if user == "models":
-                print("Models:", ", ".join(models.keys()) or "(none)")
+                print("🔍 Here are the available models from your local machine:")
+                print("\n".join(models.keys()) or "(none)")
                 continue
 
             if user == "datasets":
-                print("Datasets:", ", ".join(datasets.keys()) or "(none)")
+                print("🔍 Here are the available datasets from your local machine:")
+                print("\n".join(datasets.keys()) or "(none)")
                 continue
 
             if user.startswith("switch "):
@@ -607,16 +616,19 @@ class Evaluator:
                 model_path = models.get(model_name, model_name)
                 self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
                 print(f"🔄 Switched to: {model_name}")
+                print(f"🔍 This model is reasoning: {reasoning}")
+                print(f"🔍 This model's max_seq_length is: {max_seq_length}")
+                print(f"🔍 This model's load_in_4bit is: {load_in_4bit}")
+                print(f"🔍 This model's dtype is: {dtype}")
                 continue
 
             if user == "chat":
                 if self.model_manager.model is None:
                     print("⚠️ Load a model first (use 'switch').")
                     continue
-                print(f"Chatting with {self.model_manager.model_name}")
+                print(f"💬 Chatting with {self.model_manager.model_name}")
                 print("Type 'exit' to leave chat.")
                 generate_args = _get_generate_args()
-                
                 system_prompt = input("System prompt(optional): ").strip()
                 if system_prompt:
                     messages = [{"role": "system", "content": system_prompt}]
@@ -624,7 +636,7 @@ class Evaluator:
                     messages = []
                 while True:
                     try:
-                        msg = input("You: ").strip()
+                        msg = input("\n👤 You: ").strip()
                         messages.append({"role": "user", "content": msg})
                     except KeyboardInterrupt:
                         print("\n👋 Bye")
@@ -637,13 +649,14 @@ class Evaluator:
                 continue
 
             if user == "benchmark":
-                model_name = input("Model: ").strip()
+                print("🎮 The benchmark command is used to evaluate the performance of a model on multiple datasets.")
+                model_name = input("Please enter the model name: ").strip()
                 reasoning = input("Is the model reasoning? (y/n): ").strip()
                 reasoning = reasoning.lower() == "y"
-                max_seq_length = input("Enter max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
+                max_seq_length = input("Please enter the max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
                 load_in_4bit = input("Enter load_in_4bit(empty for default): ").strip() or self.config.LOAD_IN_4BIT
                 dtype = input("Enter dtype(empty for default): ").strip() or self.config.DTYPE
-                dataset_names = input("Datasets (comma or 'all'): ").strip()
+                dataset_names = input("Please enter the datasets (separated by comma or 'all'): ").strip()
                 if dataset_names == "all":
                     dataset_names = list(datasets.keys())
                 else:
@@ -651,7 +664,7 @@ class Evaluator:
                 labels_map = {}
                 for dataset_name in dataset_names:
                     while True:
-                        labels = input(f"Enter labels for the dataset {dataset_name} e.g.[label1,label2]: ").strip()
+                        labels = input(f"Please enter the labels for the dataset {dataset_name} e.g.[label1,label2]: ").strip()
                         if labels:
                             labels = ast.literal_eval(labels)
                             labels_map[dataset_name] = labels
@@ -659,7 +672,7 @@ class Evaluator:
                         else:
                             print("You must enter labels for each dataset")
 
-                max_samples = input("Num samples: ").strip()
+                max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
 
                 generate_args = _get_generate_args()
@@ -674,7 +687,7 @@ class Evaluator:
                 continue
 
             if user == "compare":
-                model_names = input("Models (comma or 'all'): ").strip()
+                model_names = input("Please enter the models (separated by comma or 'all'): ").strip()
                 if model_names == "all":
                     model_names = list(models.keys())
                 else:
@@ -691,12 +704,12 @@ class Evaluator:
                         "load_in_4bit": load_in_4bit,
                         "dtype": dtype,
                     }
-                dataset_name = input("Dataset: ").strip()
-                max_samples = input("Num samples: ").strip()
+                dataset_name = input("Please enter the dataset name: ").strip()
+                max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
 
                 while True:
-                    labels = input(f"Enter labels for the dataset {dataset_name} e.g. [label1,label2]: ").strip()
+                    labels = input(f"Please enter the labels for the dataset {dataset_name} e.g. [label1,label2]: ").strip()
                     if labels:
                         labels = ast.literal_eval(labels)
                         break
@@ -707,4 +720,4 @@ class Evaluator:
                 self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
                 continue
 
-            print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | quit")
+            print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | help | quit")
