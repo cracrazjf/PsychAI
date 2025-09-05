@@ -15,19 +15,19 @@ class SettingsConfig:
     # =============================================================================
     
     # Base data path
-    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", "/root/autodl-tmp")
+    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", None)
 
     # Transformers cache directory
-    TRANSFORMERS_CACHE = os.getenv("TRANSFORMERS_CACHE", os.path.join(DATA_DISK_PATH, "cache/huggingface/hub"))
+    TRANSFORMERS_CACHE = os.getenv("TRANSFORMERS_CACHE", None)
 
     # Hugging Face datasets cache directory
-    HF_DATASETS_CACHE = os.getenv("HF_DATASETS_CACHE", os.path.join(DATA_DISK_PATH, "cache/hf_datasets"))
+    HF_DATASETS_CACHE = os.getenv("HF_DATASETS_CACHE", None)
 
     # Hugging Face home directory
-    HF_HOME = os.getenv("HF_HOME", os.path.join(DATA_DISK_PATH, "cache/huggingface"))
+    HF_HOME = os.getenv("HF_HOME", None)
 
     # Torch cache directory
-    TORCH_HOME = os.getenv("TORCH_HOME", os.path.join(DATA_DISK_PATH, "cache/torch"))
+    TORCH_HOME = os.getenv("TORCH_HOME", None)
     
     # CUDA visible devices
     CUDA_VISIBLE_DEVICES = os.getenv("CUDA_VISIBLE_DEVICES", None)
@@ -80,7 +80,8 @@ class SettingsConfig:
         if cls.HF_TOKEN:
             try:
                 from huggingface_hub import login
-                os.environ["HF_ENDPOINT"] = cls.HF_ENDPOINT
+                if cls.HF_ENDPOINT is not None:
+                    os.environ["HF_ENDPOINT"] = cls.HF_ENDPOINT
                 login(token=cls.HF_TOKEN)
                 print("✅ Hugging Face login completed!")
             except ImportError:
