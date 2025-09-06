@@ -513,7 +513,7 @@ class XAYBZ:
                         t_inst = self.index_to_subcategory[i]  # 1-based
                         legal = self.legal_ab_matrix_by_cat[cat][t_inst - 1, a_inst - 1]
                         labels[i] = "B_Legal" if legal == 1 else "B_Omitted"
-        return labels
+        return labels,
 
     def assign_legality_to_sentence(self, sentence: list[str]):
         a_tok = next(t for t in sentence if t and t[0] == "A")
