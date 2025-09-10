@@ -4,7 +4,7 @@ from ..model_manager.llm import LLM_ModelManager
 import os
 from trl import SFTTrainer, SFTConfig
 
-class Trainer:
+class LLM_Trainer:
     def __init__(self, config):
         self.config = config
         self.model_manager = LLM_ModelManager()
