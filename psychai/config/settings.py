@@ -79,7 +79,6 @@ class SettingsConfig:
             try:
                 from huggingface_hub import login
                 if cls.HF_ENDPOINT is not None:
-                    print("Setting HF_ENDPOINT to", cls.HF_ENDPOINT)
                     os.environ["HF_ENDPOINT"] = cls.HF_ENDPOINT
                 login(token=cls.HF_TOKEN)
                 print("Hugging Face login completed!")

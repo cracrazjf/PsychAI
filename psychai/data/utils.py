@@ -46,7 +46,6 @@ def stable_id(*parts: Any, digest_size: int = 16) -> str:
 
 def split(data: Iterator[Dict], split_ratio: list[float] = [0.9, 0.05, 0.05], *, shuffle:bool = True, seed: int = 66, save_path: Optional[str] = None) -> Dataset:
     dataset = Dataset.from_list(list(data))
-    print(dataset)
     if sum(split_ratio) != 1:
         raise ValueError("split_ratio must sum to 1")
     if shuffle:
