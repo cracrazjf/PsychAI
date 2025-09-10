@@ -41,7 +41,7 @@ class LLM_Trainer:
                 target_modules=self.config.LORA_TARGET_MODULES,
                 bias=self.config.BIAS,
                 use_gradient_checkpointing=self.config.USE_GRADIENT_CHECKPOINTING,
-                random_state=self.config.RANDOM_STATE,
+                random_state=self.config.RANDOM_SEED,
                 use_rslora=self.config.USE_RSLORA,
                 loftq_config=self.config.LOFTQ_CONFIG
             )
