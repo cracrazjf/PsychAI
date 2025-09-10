@@ -124,8 +124,8 @@ class LLM_Trainer:
         if self.config.USE_UNSLOTH:
             return SFTConfig(
                 dataset_text_field = "text",
-                max_length=self.config.MAX_SEQ_LENGTH,
                 packing=False,
+                max_length=self.config.MAX_SEQ_LENGTH,
                 per_device_train_batch_size=self.config.PER_DEVICE_TRAIN_BATCH_SIZE,
                 gradient_accumulation_steps=self.config.GRADIENT_ACCUMULATION_STEPS,
                 warmup_steps=self.config.WARMUP_STEPS,
@@ -133,22 +133,22 @@ class LLM_Trainer:
                 max_steps=self.config.MAX_STEPS,
                 learning_rate=self.config.LEARNING_RATE,
                 logging_steps=self.config.LOGGING_STEPS,
+                logging_dir=self.config.LOGGING_DIR,
                 optim=self.config.OPTIMIZER,
                 weight_decay=self.config.WEIGHT_DECAY,
                 lr_scheduler_type=self.config.LR_SCHEDULER,
                 seed=self.config.RANDOM_SEED,
                 output_dir=self.config.OUTPUT_DIR,
                 report_to=self.config.REPORT_TO,
-                save_strategy=self.config.SAVE_STRATEGY,
                 eval_strategy=self.config.EVAL_STRATEGY,
+                eval_steps=self.config.EVAL_STEPS,
                 per_device_eval_batch_size=self.config.PER_DEVICE_EVAL_BATCH_SIZE,
                 eval_accumulation_steps=self.config.EVAL_ACCUMULATION_STEPS,
-                eval_steps=self.config.EVAL_STEPS,
-                logging_dir=self.config.LOGGING_DIR,
-                load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
-                metric_for_best_model=self.config.METRIC_FOR_BEST_MODEL,  
+                save_strategy=self.config.SAVE_STRATEGY,
                 save_steps=self.config.SAVE_STEPS,
                 save_total_limit=self.config.SAVE_TOTAL_LIMIT,
+                load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
+                metric_for_best_model=self.config.METRIC_FOR_BEST_MODEL,  
                 greater_is_better=self.config.GREATER_IS_BETTER,
             )
         else:
@@ -158,9 +158,6 @@ class LLM_Trainer:
         self, 
         prompt_template: Optional[str] = None,
     ) -> Any:
-    
-        print("🏋️ Starting training...")
-        
         if self.model_manager.model is None or self.model_manager.tokenizer is None:
             self.load_model_and_tokenizer()
         
@@ -181,25 +178,15 @@ class LLM_Trainer:
         else:
             raise ValueError("This option is not available")
         
+        print("Starting training...")
         self.trainer = trainer
         
         # Train
         trainer.train()
         
         # Save model
-        print("💾 Saving model...")
-        self.save_model()
-        print("✅ Training completed!")
+        print("Saving model...")
+        trainer.save_model(self.config.FINAL_MODEL_DIR)
+        print("Training completed!")
         
         return self.model_manager.model, self.model_manager.tokenizer
-    
-    def save_model(self):
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H")
-        save_path = self.config.MODELS_PATH + "/" + self.model_manager.model_name + "_" +self.config.DATA_NAME + "_" +timestamp
-        os.makedirs(save_path, exist_ok=True)
-        if self.trainer is None:
-            raise ValueError("No trainer available. Train the model first.")
-        self.model_manager.tokenizer.save_pretrained(save_path)
-        self.model_manager.model.save_pretrained(save_path)
-        print(f"💾 Lora model saved to: {save_path}")

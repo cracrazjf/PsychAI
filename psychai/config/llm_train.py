@@ -3,6 +3,7 @@ from typing import List
 
 
 class LLM_TrainConfig:
+    EXPERIMENT_NAME = None
     # Paths
     DATA_DISK_PATH = None
     OUTPUT_DIR = None
@@ -81,5 +82,7 @@ class LLM_TrainConfig:
         print(f"Output directory created: {self.OUTPUT_DIR}")
         os.makedirs(self.LOGGING_DIR, exist_ok=True)
         print(f"Logging directory created: {self.LOGGING_DIR}")
+        os.makedirs(self.FINAL_MODEL_DIR, exist_ok=True)
+        print(f"Final model directory created: {self.FINAL_MODEL_DIR}")
 
 
