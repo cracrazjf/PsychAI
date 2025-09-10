@@ -63,8 +63,8 @@ class LLM_ModelManager:
 
     def infer_model_company(self, model_name: str):
         for company in ['llama', 'gpt', 'deepseek', 'qwen', 'mistral', 'gemma'] :
-        if company in model_name.lower():
-            return company
+            if company in model_name.lower():
+                return company
         return None
 
     def apply_chat_template(self, chat_template: str):
