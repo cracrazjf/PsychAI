@@ -5,7 +5,6 @@ import os
 from trl import SFTTrainer, SFTConfig
 
 class LLM_Trainer:
-    
     def __init__(self, config):
         self.config = config
         self.model_manager = LLM_ModelManager()
@@ -15,22 +14,14 @@ class LLM_Trainer:
         self
     ) -> Tuple[Any, Any]:
 
-        model_name = self.config.MODEL_NAME
-        model_path = self.config.MODEL_PATH
-        use_unsloth = self.config.USE_UNSLOTH
-        apply_lora = self.config.APPLY_LORA
-        reasoning = self.config.REASONING
-
-        chat_template = self.config.CHAT_TEMPLATE
-
-        print(f"🚀 Loading model: {model_name} from {model_path}")
+        print(f"Loading model: {self.config.MODEL_NAME} from {self.config.MODEL_PATH}")
         
         self.model_manager = LLM_ModelManager()
         self.model_manager.load_model(
-            model_name=model_name,
-            model_path=model_path,
-            reasoning=reasoning,
-            use_unsloth=use_unsloth,
+            model_name=self.config.MODEL_NAME,
+            model_path=self.config.MODEL_PATH,
+            reasoning=self.config.REASONING,
+            use_unsloth=self.config.USE_UNSLOTH,
             for_training=True,
             max_seq_length=self.config.MAX_SEQ_LENGTH,
             load_in_4bit=self.config.LOAD_IN_4BIT,
@@ -38,12 +29,12 @@ class LLM_Trainer:
             dtype=self.config.DTYPE,
         )
 
-        if chat_template is not None:
-            self.model_manager.apply_chat_template(chat_template)
+        if self.config.CHAT_TEMPLATE is not None:
+            self.model_manager.apply_chat_template(self.config.CHAT_TEMPLATE)
 
-        if apply_lora:
+        if self.config.APPLY_LORA:
             self.model_manager.apply_lora(
-                use_unsloth=use_unsloth,
+                use_unsloth=self.config.USE_UNSLOTH,
                 rank=self.config.LORA_RANK,
                 alpha=self.config.LORA_ALPHA,
                 dropout=self.config.LORA_DROPOUT,
@@ -130,7 +121,6 @@ class LLM_Trainer:
         return { "text" : texts}
 
     def create_training_arguments(self):
-        print(self.config.USE_UNSLOTH)
         if self.config.USE_UNSLOTH:
             return SFTConfig(
                 dataset_text_field = "text",
@@ -161,28 +151,8 @@ class LLM_Trainer:
                 save_total_limit=self.config.SAVE_TOTAL_LIMIT,
                 greater_is_better=self.config.GREATER_IS_BETTER,
             )
-        # else:
-        #     return TrainingArguments(output_dir=self.config.OUTPUT_DIR,
-        #                         per_device_train_batch_size=self.config.PER_DEVICE_TRAIN_BATCH_SIZE,
-        #                         gradient_accumulation_steps=self.config.GRADIENT_ACCUMULATION_STEPS,
-        #                         warmup_steps=self.config.WARMUP_STEPS,
-        #                         max_steps=self.config.MAX_STEPS,
-        #                         learning_rate=self.config.LEARNING_RATE,
-        #                         logging_steps=self.config.LOGGING_STEPS,
-        #                         optim=self.config.OPTIMIZER,
-        #                         weight_decay=self.config.WEIGHT_DECAY,
-        #                         lr_scheduler_type=self.config.LR_SCHEDULER,
-        #                         seed=self.config.RANDOM_STATE,
-        #                         save_steps=self.config.SAVE_STEPS,
-        #                         save_total_limit=self.config.SAVE_TOTAL_LIMIT,
-        #                         eval_steps=self.config.EVAL_STEPS,
-        #                         eval_strategy=self.config.EVAL_STRATEGY,
-        #                         logging_dir=self.config.LOGGING_DIR,
-        #                         report_to=self.config.REPORT_TO,
-        #                         load_best_model_at_end=self.config.LOAD_BEST_MODEL_AT_END,
-        #                         metric_for_best_model=self.config.METRIC_FOR_BEST_MODEL,
-        #                         greater_is_better=self.config.GREATER_IS_BETTER,
-        #                         )
+        else:
+            raise ValueError("this option is not available")
     
     def train(
         self, 
@@ -209,15 +179,7 @@ class LLM_Trainer:
                 args=self.training_args,
             )
         else:
-            raise ValueError("Unsloth is not available")
-            # # Use standard HuggingFace trainer
-            # trainer = HFTrainer(
-            #     model=self.model_manager.model,
-            #     tokenizer=self.model_manager.tokenizer,
-            #     train_dataset=train_dataset,
-            #     eval_dataset=eval_dataset,
-            #     args=self.training_args,
-            # )
+            raise ValueError("This option is not available")
         
         self.trainer = trainer
         

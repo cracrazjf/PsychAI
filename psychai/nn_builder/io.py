@@ -6,24 +6,17 @@ from typing import Any, Dict, List, Tuple, Union, Optional
 import torch
 
 try:
-    from safetensors.torch import save_file as save_safetensors  # optional
+    from safetensors.torch import save_file as save_safetensors
+    from safetensors.torch import load_file as load_safetensors
     _HAS_SAFETENSORS = True
 except Exception:
     _HAS_SAFETENSORS = False
 
+__all__ = ["save_config", "save_pretrained", "load_config", "build_spec_from_config", "from_pretrained"]
 
 # --------- helpers
 
 def _jsonify(obj: Any) -> Any:
-    """
-    Make an object JSON-serializable:
-    - Convert tuples to lists
-    - Dataclasses -> dict
-    - Tensors -> shape + dtype summary (not data)
-    - torch.dtype/device -> str
-    - Sets -> sorted lists
-    - Fallback: use str(obj)
-    """
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
     if isinstance(obj, (list, tuple)):
@@ -44,16 +37,12 @@ def _jsonify(obj: Any) -> Any:
             "dtype": str(obj.dtype).replace('torch.', ''),
             "shape": list(obj.shape),
         }
-    # tuples like (C,H,W), etc.
     if isinstance(obj, (bytes, bytearray)):
         return obj.decode('utf-8', errors='ignore')
-    # last resort
     return str(obj)
-
 
 def _canonical_json_bytes(d: Dict[str, Any]) -> bytes:
     return json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
-
 
 def _sha256_of_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
@@ -62,24 +51,13 @@ def _sha256_of_bytes(b: bytes) -> str:
 # --------- config extraction
 
 def extract_spec_dict(model_or_spec) -> Dict[str, Any]:
-    """
-    Return a JSON-ready dict describing your ModelSpec:
-    - { 'vocab_size', 'image_shape', 'layers': [...] }
-    Accepts:
-      - ModelSpec instance
-      - Model (with .spec attribute)
-      - raw list[dict] of layers
-    """
-    # Case 1: ModelSpec-like
-    if hasattr(model_or_spec, 'layers') and hasattr(model_or_spec, 'vocab_size'):
+    if hasattr(model_or_spec, 'layers') and hasattr(model_or_spec, 'vocab_size') and hasattr(model_or_spec, 'image_shape'):
         spec_layers = model_or_spec.layers
         vocab_size = getattr(model_or_spec, 'vocab_size', None)
         image_shape = getattr(model_or_spec, 'image_shape', None)
-    # Case 2: Model with .spec
     elif hasattr(model_or_spec, 'spec'):
         spec = model_or_spec.spec
         return extract_spec_dict(spec)
-    # Case 3: already a list[dict]
     elif isinstance(model_or_spec, list):
         spec_layers = model_or_spec
         vocab_size = None
@@ -87,15 +65,12 @@ def extract_spec_dict(model_or_spec) -> Dict[str, Any]:
     else:
         raise TypeError("extract_spec_dict: expected ModelSpec, Model, or list[dict].")
 
-    # Important: your layer specs already contain "_name", "type", and params.
-    # We only need to deep-convert to JSON-friendly.
     spec_dict = {
         "vocab_size": _jsonify(vocab_size),
         "image_shape": _jsonify(image_shape),
         "layers": _jsonify(spec_layers),
     }
     return spec_dict
-
 
 def build_config_dict(
     model_or_spec,
@@ -104,9 +79,6 @@ def build_config_dict(
     config_version: int = 1,
     extra_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Compose the top-level config.json dict (architecture + metadata).
-    """
     spec_dict = extract_spec_dict(model_or_spec)
 
     meta = {
@@ -130,26 +102,17 @@ def build_config_dict(
     }
     return cfg
 
-
 # --------- save APIs
 
 def save_config(save_dir: str, config_dict: Dict[str, Any]) -> str:
-    """
-    Write config.json to save_dir. Returns the config path.
-    """
     os.makedirs(save_dir, exist_ok=True)
     cfg_path = os.path.join(save_dir, "config.json")
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(config_dict, f, indent=2, ensure_ascii=False)
     return cfg_path
 
-
 def _split_state_dict_for_safetensors(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-    """
-    Safetensors requires tensors only; filter out non-tensors if any.
-    """
     return {k: v for k, v in state_dict.items() if torch.is_tensor(v)}
-
 
 def save_pretrained(
     model: torch.nn.Module,
@@ -162,13 +125,6 @@ def save_pretrained(
     weights_filename: Optional[str] = None,
     prefer_safetensors: bool = True,
 ) -> Dict[str, str]:
-    """
-    Save both config.json and model weights (HF-like).
-    - `model` can be your CausalLMWrapper or bare Model; state_dict() is saved as-is.
-    - `model_or_spec_for_config` is used to build the architecture config; if None, we try
-       to infer from `model` (looking for .spec).
-    - Returns paths of written files.
-    """
     os.makedirs(save_dir, exist_ok=True)
 
     # 1) Build config
@@ -225,3 +181,82 @@ def save_pretrained(
         paths["weights"] = weights_path
 
     return paths
+
+
+# --------- load config
+
+def load_config(load_dir: str) -> Dict[str, Any]:
+    cfg_path = os.path.join(load_dir, "config.json")
+    if not os.path.exists(cfg_path):
+        raise FileNotFoundError(f"No config.json found under {load_dir}")
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# --------- rebuild spec + model
+
+def build_spec_from_config(config: Dict[str, Any]):
+    from .nn_builder import ModelSpec
+
+    spec_dict = config["spec"]
+    spec = ModelSpec(
+        vocab_size=spec_dict.get("vocab_size"),
+        image_shape=tuple(spec_dict["image_shape"]) if spec_dict.get("image_shape") else None,
+    )
+    for layer_spec in spec_dict["layers"]:
+        # already has "name" and params
+        spec.layers.append(layer_spec)
+        spec.names.add(layer_spec["name"])
+    return spec
+
+
+def from_pretrained(
+    load_dir: str,
+    *,
+    strict: bool = True,
+    map_location: Optional[Union[str, torch.device]] = None,
+    torch_dtype: Optional[torch.dtype] = None,
+    device: Optional[Union[str, torch.device]] = None,
+) -> torch.nn.Module:
+    from .nn_builder import Model
+
+    # 1) Load config
+    config = load_config(load_dir)
+
+    # 2) Rebuild spec
+    spec = build_spec_from_config(config)
+
+    # 3) Build model
+    model = Model(spec)
+
+    # 5) Locate weights file
+    weights_path = None
+    if _HAS_SAFETENSORS:
+        candidate = os.path.join(load_dir, "model.safetensors")
+        if os.path.exists(candidate):
+            weights_path = candidate
+    if weights_path is None:
+        candidate = os.path.join(load_dir, "pytorch_model.bin")
+        if os.path.exists(candidate):
+            weights_path = candidate
+    if weights_path is None:
+        raise FileNotFoundError(f"No weights file found under {load_dir}")
+
+    # 6) Load state_dict
+    if weights_path.endswith(".safetensors"):
+        sd = load_safetensors(weights_path, device="cpu")
+    else:
+        sd = torch.load(weights_path, map_location="cpu")
+
+    missing, unexpected = model.load_state_dict(sd, strict=strict)
+
+    if missing or unexpected:
+        print(f"[from_pretrained] Missing keys: {missing}")
+        print(f"[from_pretrained] Unexpected keys: {unexpected}")
+
+    # 7) Move / cast
+    if device is not None:
+        model.to(device)
+    if torch_dtype is not None:
+        model.to(dtype=torch_dtype)
+
+    return model

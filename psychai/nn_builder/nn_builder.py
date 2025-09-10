@@ -15,49 +15,51 @@ class ModelSpec:
         self.vocab_size = vocab_size
         self.image_shape = image_shape
         self.layers: list[dict] = []
-        self._names: set[str] = set()
+        self.names: set[str] = set()
 
     def add_layer(self, layer_spec: Dict[str, Any], name: str = None):
         if "type" not in layer_spec:
             raise ValueError("layer_spec must include a 'type' key.")
+        spec = dict(layer_spec)
+
+        # add name of the layer if not provided
+        # the name is the type of the layer and the index of the layer
         if name is None:
             name = f"{layer_spec['type']}_{len(self.layers)}"
-        if name in self._names:
+        # check if the name is already in the set
+        if name in self.names:
             raise ValueError(f"Duplicate layer name: {name}")
-        self._names.add(name)
-        spec = dict(layer_spec)
-        spec["_name"] = name
+        self.names.add(name)
+        spec["name"] = name
         self.layers.append(spec)
         return name
     
 class Model(nn.Module):
-    def __init__(self, specs: ModelSpec | list[dict]):
+    def __init__(self, specs: ModelSpec):
         super().__init__()
         self.spec = specs
-        if isinstance(specs, ModelSpec):
-            layer_specs = specs.layers
-        else:
-            layer_specs = specs
+        layer_specs = specs.layers
 
-        self._order: list[str] = []
+        self.order: list[str] = []
         self.layers_by_name = nn.ModuleDict()
-        for i, spec in enumerate(layer_specs):
-            name = spec.get("_name") or f"{spec['type']}_{i}"
-            layer = build_layer({k: v for k, v in spec.items() if k != "_name"})
+        for spec in layer_specs:
+            name = spec.get("name")
+            layer = build_layer({k: v for k, v in spec.items() if k != "name"})
             self.layers_by_name[name] = layer
-            self._order.append(name)
+            self.order.append(name)
 
     def forward(self, inputs: dict, state: dict | None = None, detach_state: bool = False) -> dict:
         if state is None:
-            for name in self._order:
+            for name in self.order:
                 layer = self.layers_by_name[name]
                 outputs = layer(inputs)
                 inputs = outputs
             return inputs
         
         else:
+            # this is the training mode for stateful rnn models
             next_state = state
-            for name in self._order:
+            for name in self.order:
                 layer = self.layers_by_name[name]
                 if name in next_state and "last_hidden" in next_state[name]:
                     inputs["last_hidden"] = next_state[name]["last_hidden"]
@@ -66,19 +68,20 @@ class Model(nn.Module):
                 outputs = layer(inputs)
 
                 if "last_hidden" in outputs:
-                    lh = outputs["last_hidden"]
+                    last_hidden = outputs["last_hidden"]
                     if detach_state:
-                        if isinstance(lh, tuple):  # e.g., LSTM (h_n, c_n)
-                            lh = tuple(t.detach() if hasattr(t, "detach") else t for t in lh)
-                        elif hasattr(lh, "detach"):
-                            lh = lh.detach()
-                    next_state[name] = {"last_hidden": lh}
+                        # this is for LSTM layer
+                        if isinstance(last_hidden, tuple):
+                            last_hidden = tuple(t.detach() if hasattr(t, "detach") else t for t in last_hidden)
+                        elif hasattr(last_hidden, "detach"):
+                            last_hidden = last_hidden.detach()
+                    next_state[name] = {"last_hidden": last_hidden}
                 if "last_logits" in outputs:
-                    ll = outputs["last_logits"]
+                    last_logits = outputs["last_logits"]
                     if detach_state:
-                        if hasattr(ll, "detach"):
-                            ll = ll.detach()
-                    next_state[name] = {"last_logits": ll}
+                        if hasattr(last_logits, "detach"):
+                            last_logits = last_logits.detach()
+                    next_state[name] = {"last_logits": last_logits}
 
                 inputs = outputs
             return inputs, next_state
@@ -87,10 +90,9 @@ class Model(nn.Module):
         return self.layers_by_name[name]
 
     def layer_names(self) -> list[str]:
-        return list(self._order)
+        return list(self.order)
 
     def summary(self) -> str:
-        """Run a dry forward pass and return an ASCII summary table."""
         from torch import nn
 
         def _num_params(m: nn.Module) -> int:
@@ -133,16 +135,17 @@ class CausalLMWrapper(nn.Module):
                              state=state,
                              detach_state=detach_state,
                              **kwargs)
-        logits = out["logits"]  # (B, T, V)
+        logits = out["logits"]
         loss = None
         if labels is not None:
             if labels.dtype != torch.long:
                 labels = labels.long()
+            # shift the logits and labels by one
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = labels[:, 1:].contiguous()
             loss = self.loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
                                 shift_labels.view(-1))
         if state is None:
-            return {"loss": loss, "logits": shift_logits, 'labels': shift_labels}
+            return {"loss": loss, "logits": shift_logits, "labels": shift_labels}
         else:
             return {"loss": loss, "logits": shift_logits, "labels": shift_labels, "state": next_state}

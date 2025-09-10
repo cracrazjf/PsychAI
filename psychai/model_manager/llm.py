@@ -23,22 +23,24 @@ class LLM_ModelManager:
         self.model = None
         self.model_name = None
         self.tokenizer = None
-        self.reasoning = None  
-        self.model_companies = ['llama', 'gpt', 'deepseek', 'qwen', 'mistral', 'gemma'] 
-    def load_model(self, model_name: str, model_path: str, reasoning: bool,
-                   use_unsloth: bool, for_training: bool,
-                   max_seq_length: int, load_in_4bit: bool,
-                   full_finetuning: bool, dtype: str):
+        self.reasoning = None
+    def load_model(self, 
+                   model_name: str, 
+                   model_path: str, 
+                   *,
+                   reasoning: bool,
+                   use_unsloth: bool, 
+                   for_training: bool,
+                   max_seq_length: int, 
+                   load_in_4bit: bool,
+                   full_finetuning: bool, 
+                   dtype: str):
         self.free_memory()
         
         self.model_name = model_name
-        for company in self.model_companies:
-            if company in model_name.lower():
-                self.model_company = company
-                break
-        else:
-            self.model_company = None
+        self.model_company = self.infer_model_company(model_name)
         self.reasoning = reasoning
+
         if use_unsloth and UNSLOTH_AVAILABLE:
             self.model, self.tokenizer = load_model_unsloth(
                 model_name=model_name,
@@ -57,7 +59,13 @@ class LLM_ModelManager:
                 dtype=dtype,
                 for_training=for_training
             )
-        print(f"🚀 Loaded {model_name} from {self.model_company}")
+        print(f"Loaded {model_name} from {self.model_company}")
+
+    def infer_model_company(self, model_name: str):
+        for company in ['llama', 'gpt', 'deepseek', 'qwen', 'mistral', 'gemma'] :
+        if company in model_name.lower():
+            return company
+        return None
 
     def apply_chat_template(self, chat_template: str):
         self.tokenizer = get_chat_template(
@@ -65,11 +73,17 @@ class LLM_ModelManager:
             chat_template,
         )
 
-    def apply_lora(self, use_unsloth: bool, 
-                   rank: int, alpha: int, 
-                   dropout: float, target_modules: List[str], 
-                   bias: str, use_gradient_checkpointing: str,
-                   random_state: int, use_rslora: bool,
+    def apply_lora(self, 
+                   *,
+                   use_unsloth: bool, 
+                   rank: int, 
+                   alpha: int, 
+                   dropout: float, 
+                   target_modules: List[str], 
+                   bias: str, 
+                   use_gradient_checkpointing: str,
+                   random_state: int, 
+                   use_rslora: bool,
                    loftq_config: Optional[Any]):
 
         if self.model is None:
@@ -182,7 +196,7 @@ def load_model(
     return model, tokenizer
 
 def load_model_unsloth(
-    model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", 
+    model_name: str, 
     model_path: str = None,
     dtype: str = None,
     max_seq_length: int = 512, 
@@ -193,16 +207,17 @@ def load_model_unsloth(
     
     if not UNSLOTH_AVAILABLE:
         raise ImportError("Unsloth is not installed. Please install it first.")
+
     # Use local path if provided, otherwise use model_name
     model_path = model_path if model_path else model_name
     
     quantization_str = "4-bit" if load_in_4bit else "16-bit"
-    print(f"🚀 Loading {model_name} with Unsloth from: {model_path} ({quantization_str})")
+    print(f"Loading {model_name} with Unsloth from: {model_path} in {quantization_str}")
     
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_path,
         max_seq_length=max_seq_length,
-        dtype=dtype,  # Auto-detect optimal dtype
+        dtype=dtype,
         load_in_4bit=load_in_4bit,
         full_finetuning=full_finetuning,
     )

@@ -7,6 +7,8 @@ from itertools import chain
 from datasets import Dataset
 import torch
 from torch.optim import AdamW, SGD
+from psychai.trainer.train_utils import _to_serializable, save_checkpoint, load_checkpoint, _clean_dir
+from psychai.nn_builder.save_api import save_pretrained
 from tqdm import tqdm
 import numpy as np
 from pprint import pprint
@@ -26,8 +28,17 @@ class NN_Trainer:
             optimizer = SGD(self.model_manager.model.parameters(), lr=self.config.LEARNING_RATE, weight_decay=self.config.WEIGHT_DECAY)
         else:
             raise ValueError(f"Unsupported optimizer: {self.config.OPTIMIZER}")
-        return optimizer
 
+        scheduler = None
+        if self.config.LEARNING_RATE_SCHEDULER is not None:
+            if self.config.LEARNING_RATE_SCHEDULER == "step":
+                scheduler = optimizer.lr_scheduler.StepLR(optimizer, step_size=self.config.LR_STEPS, gamma=self.config.GAMMA)
+            elif self.config.LEARNING_RATE_SCHEDULER == "exponential":
+                scheduler = optimizer.lr_scheduler.ExponentialLR(optimizer, gamma=self.config.GAMMA)
+            else:
+                raise ValueError(f"Unsupported learning rate scheduler: {self.config.LEARNING_RATE_SCHEDULER}")
+        return optimizer, scheduler
+    
     # language model functions
     def load_lanaguge_model_and_tokenizer(self):
         self.model_manager = LM_ModelManager()
@@ -54,7 +65,7 @@ class NN_Trainer:
 
         return tokenized_dataset, collator
 
-    def create_dataloader(self, dataset, shuffle_dataset, shuffle_dataloader, collator):
+    def create_dataloader(self, dataset, shuffle_dataset, shuffle_dataloader, collator, epoch=66):
 
         def _concatenate_input_ids_and_attention_mask(dataset):
             input_ids_lists = dataset["input_ids"]
@@ -102,7 +113,7 @@ class NN_Trainer:
             return blocks
         
         if shuffle_dataset:
-            dataset = dataset.shuffle(seed=self.config.RANDOM_SEED)
+            dataset = dataset.shuffle(seed=epoch)
         dataset = _concatenate_input_ids_and_attention_mask(dataset)
         if self.config.OVERLAPPING_SEQUENCES:
             sequences = _create_overlapping_sequences(dataset["input_ids"], dataset["attention_mask"], self.config.SEQUENCE_LENGTH, self.model_manager.tokenizer.pad_token_id, self.config.OVERLAPPING_STRIDE)
@@ -115,140 +126,176 @@ class NN_Trainer:
         return dataloader
 
     def train_language_model(self, compute_metrics=None):
-        # load model and tokenizer
-        self.load_lanaguge_model_and_tokenizer()
+        # create legacy train flag
+        legacy_train = self.config.SEQUENCE_LENGTH == 2
+        print(f"‼️ Detected sequence length equals to 2, using legacy train mode")
 
-        # select optimizer
-        optimizer = self.create_optimizer()
+        for run in range(self.config.NUM_RUNS):
+            best_acc = float("-inf") # for best model selection
+            # load model and tokenizer
+            self.load_lanaguge_model_and_tokenizer()
 
-        # create logging directory
-        if self.config.LOGGING_DIR is not None:
-            os.makedirs(self.config.LOGGING_DIR, exist_ok=True)
-            log_file = os.path.join(self.config.LOGGING_DIR, "metrics.jsonl")
-            with open(log_file, "w") as f:
-                pass
-        else:
-            log_file = None
+            # tokenize dataset
+            train_dataset, collator = self.tokenize_language_data(self.config.TRAIN_DATA_PATH)
+            if self.config.EVAL_DATA_PATH is not None:
+                eval_dataset, collator = self.tokenize_language_data(self.config.EVAL_DATA_PATH)
+            else:
+                eval_dataset = None
 
-        # tokenize dataset
-        train_dataset, collator = self.tokenize_language_data(self.config.TRAIN_DATA_PATH)
-        if self.config.EVAL_DATA_PATH is not None:
-            eval_dataset, collator = self.tokenize_language_data(self.config.EVAL_DATA_PATH)
-        else:
-            eval_dataset = None
+            # select optimizer
+            optimizer, scheduler = self.create_optimizer()
 
-        # training loop
-        loop = tqdm(range(self.config.NUM_EPOCHS), leave=True, desc=f"Epoch", ncols=100)
-        for epoch in loop:
-            # create dataloader
-            train_loader = self.create_dataloader(train_dataset, self.config.SHUFFLE_DATASET, self.config.SHUFFLE_DATALOADER, collator)
-            eval_loader = self.create_dataloader(eval_dataset, False, False, collator) if eval_dataset is not None else None
-            # show examples of train dataset
-            if epoch == 0:
-                print(f"📝 showing examples of train dataset")
-                for i, batch in enumerate(train_loader):
-                    if i < 3:
-                        print
-                        print(f"Example input sequences{i}: {self.model_manager.tokenizer.batch_decode(batch['input_ids'][:,:-1])}")
-                        print(f"Example label{i}: {self.model_manager.tokenizer.batch_decode(batch['labels'][:,1:])}")
-                        print("--------------------------------")
-                    elif i > len(train_loader) - 4:
-                        print(f"Example input sequences{i}: {self.model_manager.tokenizer.batch_decode(batch['input_ids'][:,:-1])}")
-                        labels_for_decode = batch['labels'][:,1:].clone()
-                        pad_token_id = self.model_manager.tokenizer.pad_token_id
-                        labels_for_decode[labels_for_decode == -100] = pad_token_id
-                        print(f"Example label{i}: {self.model_manager.tokenizer.batch_decode(labels_for_decode)}")
-                        print("--------------------------------")
+            # create runs directory
+            if self.config.PROJECT_PATH is not None:
+                run_dir = os.path.join(self.config.PROJECT_PATH, f"run_{run}")
+                os.makedirs(run_dir, exist_ok=True)
+                log_file = os.path.join(run_dir, "train_metrics_info.jsonl")
+                with open(log_file, "w") as f:
+                    pass
+            else:
+                log_file = None
             
-            def _train_epoch(model, train_loader, epoch, optimizer):
-                if self.config.LEGACY_TRAIN:
-                    state = {}
-                model.train()
-                running_loss = 0
-                # loop = tqdm(train_loader, leave=True, desc=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS}", ncols=100)
-                for i, batch in enumerate(train_loader):
-                    optimizer.zero_grad()
-                    if self.config.LEGACY_TRAIN:
-                        outputs = model.forward(input_ids=batch["input_ids"], 
-                                                attention_mask=batch["attention_mask"], 
-                                                labels=batch["labels"], 
-                                                state=state,
-                                                detach_state=True)
-                    else:
-                        outputs = model.forward(input_ids=batch["input_ids"], 
-                                                attention_mask=batch["attention_mask"], 
-                                                labels=batch["labels"])
-                    loss = outputs["loss"]
-                    loss.backward()
-                    optimizer.step()
-                    running_loss += loss.item()
-                    if self.config.LEGACY_TRAIN:
-                        state = outputs["state"]
-                return {"loss": f"{running_loss / (i + 1):.4f}",
-                        "lr": f"{optimizer.param_groups[0]['lr']:.6f}"}
+            # training loop
+            loop = tqdm(range(self.config.NUM_EPOCHS), leave=True, desc=f"Epoch", ncols=100)
+            for epoch in loop:
+                # create dataloader
+                train_loader = self.create_dataloader(train_dataset, self.config.SHUFFLE_DATASET, self.config.SHUFFLE_DATALOADER, collator, epoch)
+                eval_loader = self.create_dataloader(eval_dataset, False, False, collator, epoch) if eval_dataset is not None else None
 
-            _train_epoch(self.model_manager.model, train_loader, epoch, optimizer)
-
-            def _to_serializable(obj):
-                if hasattr(obj, "item"):      # handles numpy scalars, torch scalars
-                    return obj.item()
-                if isinstance(obj, (np.ndarray,)):
-                    return obj.tolist()       # convert arrays to lists
-                return obj
-
-            def _eval_epoch(model, eval_loader, compute_metrics, eval_dataset, epoch):
-                print(f"\n 📝 evaluating model...")
-                all_labels = []
-                all_preds = []
-                all_logits = []
-                if self.config.LEGACY_TRAIN:
-                    state = {}
-                model.eval()
-                running_loss = 0
-                loop = tqdm(eval_loader, leave=True, desc=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS}", ncols=100)
-                for i, batch in enumerate(loop):
-                    if self.config.LEGACY_TRAIN:
-                        with torch.no_grad():
+                # show examples of train dataset
+                if epoch == 0:
+                    print(f"📝 showing examples of train dataset")
+                    for i, batch in enumerate(train_loader):
+                        if i < 3:
+                            print
+                            print(f"Example input sequences{i}: {self.model_manager.tokenizer.batch_decode(batch['input_ids'][:,:-1])}")
+                            print(f"Example label{i}: {self.model_manager.tokenizer.batch_decode(batch['labels'][:,1:])}")
+                            print("--------------------------------")
+                        elif i > len(train_loader) - 4:
+                            print(f"Example input sequences{i}: {self.model_manager.tokenizer.batch_decode(batch['input_ids'][:,:-1])}")
+                            labels_for_decode = batch['labels'][:,1:].clone()
+                            pad_token_id = self.model_manager.tokenizer.pad_token_id
+                            labels_for_decode[labels_for_decode == -100] = pad_token_id
+                            print(f"Example label{i}: {self.model_manager.tokenizer.batch_decode(labels_for_decode)}")
+                            print("--------------------------------")
+                
+                def _train_epoch(model, train_loader, optimizer):
+                    if legacy_train:
+                        state = {}
+                    model.train()
+                    running_loss = 0
+                    # loop = tqdm(train_loader, leave=True, desc=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS}", ncols=100)
+                    for i, batch in enumerate(train_loader):
+                        optimizer.zero_grad()
+                        if legacy_train:
                             outputs = model.forward(input_ids=batch["input_ids"], 
                                                     attention_mask=batch["attention_mask"], 
                                                     labels=batch["labels"], 
                                                     state=state,
                                                     detach_state=True)
-                    else:
-                        with torch.no_grad():
+                        else:
                             outputs = model.forward(input_ids=batch["input_ids"], 
                                                     attention_mask=batch["attention_mask"], 
                                                     labels=batch["labels"])
-                    loss = outputs["loss"]
-                    running_loss += loss.item()
-                    all_labels.extend(outputs["labels"].detach().cpu().numpy())
-                    logits = outputs["logits"]
-                    all_logits.extend(logits.detach().cpu().numpy())
-                    preds = torch.argmax(logits, dim=-1)
-                    all_preds.extend(preds.detach().cpu().numpy())
-                    if self.config.LEGACY_TRAIN:
-                        state = outputs["state"]
-                    loop.set_postfix({"loss": f"{running_loss / (i + 1):.4f}"})
-                all_labels = np.stack(all_labels)
-                all_logits = np.stack(all_logits)
-                all_preds = np.stack(all_preds)
-                record = {
-                        "epoch": epoch+1,
-                        "loss": running_loss / (i + 1)
-                    }
-                if compute_metrics is not None:
-                    metric_info = compute_metrics(eval_dataset, all_labels, all_preds, all_logits, self.model_manager.tokenizer)
-                    print(f"📝 evaluation metrics: ")
-                    pprint(metric_info['accuracy'], compact=True)
-                    for key, value in metric_info.items():
-                        for k, v in value.items():
-                            value[k] = _to_serializable(v)
-                        record[key] = _to_serializable(value)
-                if log_file is not None:
-                    with open(log_file, "a") as f:
-                        f.write(json.dumps(record) + "\n")
+                        loss = outputs["loss"]
+                        loss.backward()
+                        optimizer.step()
+                        running_loss += loss.item()
+                        if legacy_train:
+                            state = outputs["state"]
+                    return {"loss": f"{running_loss / (i + 1):.4f}",
+                            "lr": f"{optimizer.param_groups[0]['lr']:.6f}"}
 
+                _train_epoch(self.model_manager.model, train_loader, optimizer)
+                if scheduler is not None and self.config.LEARNING_RATE_SCHEDULER in ["step", "exponential"]:
+                    scheduler.step()
 
-            if eval_dataset is not None:
-                if (epoch+1) % self.config.EVAL_STEPS == 0 or epoch == 0:
-                    _eval_epoch(self.model_manager.model, eval_loader, compute_metrics, eval_dataset, epoch)
+                def _eval_epoch(model, eval_loader, compute_metrics, eval_dataset, epoch):
+                    print(f"\n 📝 evaluating model...")
+                    all_labels = []
+                    all_preds = []
+                    all_logits = []
+                    if legacy_train:
+                        state = {}
+                    model.eval()
+                    running_loss = 0
+                    loop = tqdm(eval_loader, leave=True, desc=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS}", ncols=100)
+                    for i, batch in enumerate(loop):
+                        if legacy_train:
+                            with torch.no_grad():
+                                outputs = model.forward(input_ids=batch["input_ids"], 
+                                                        attention_mask=batch["attention_mask"], 
+                                                        labels=batch["labels"], 
+                                                        state=state,
+                                                        detach_state=True)
+                        else:
+                            with torch.no_grad():
+                                outputs = model.forward(input_ids=batch["input_ids"], 
+                                                        attention_mask=batch["attention_mask"], 
+                                                        labels=batch["labels"])
+                        loss = outputs["loss"]
+                        running_loss += loss.item()
+                        all_labels.extend(outputs["labels"].detach().cpu().numpy())
+                        logits = outputs["logits"]
+                        all_logits.extend(logits.detach().cpu().numpy())
+                        preds = torch.argmax(logits, dim=-1)
+                        all_preds.extend(preds.detach().cpu().numpy())
+                        if legacy_train:
+                            state = outputs["state"]
+                        loop.set_postfix({"loss": f"{running_loss / (i + 1):.4f}"})
+                    all_labels = np.stack(all_labels)
+                    all_logits = np.stack(all_logits)
+                    all_preds = np.stack(all_preds)
+                    record = {
+                            "epoch": epoch+1,
+                            "loss": running_loss / (i + 1)
+                        }
+                    if compute_metrics is not None:
+                        metric_info = compute_metrics(eval_dataset, all_labels, all_preds, all_logits, self.model_manager.tokenizer)
+                        if self.config.METRIC_FOR_BEST_MODEL is not None:
+                            metric_for_best = metric_info['accuracy'][self.config.METRIC_FOR_BEST_MODEL]
+                        else:
+                            metric_for_best = None
+                        print(f"📝 evaluation metrics: ")
+                        pprint(metric_info['accuracy'], compact=True)
+                        for key, value in metric_info.items():
+                            for k, v in value.items():
+                                value[k] = _to_serializable(v)
+                            record[key] = _to_serializable(value)
+                    if log_file is not None:
+                        with open(log_file, "a") as f:
+                            f.write(json.dumps(record) + "\n")
+                    return metric_for_best
+
+                if eval_dataset is not None:
+                    if (epoch+1) % self.config.EVAL_STEPS == 0 or epoch == 0:
+                        metric_for_best = _eval_epoch(self.model_manager.model, eval_loader, compute_metrics, eval_dataset, epoch)
+                        is_best = False
+                        if metric_for_best is not None and (metric_for_best > best_acc):
+                            print(f"✅ New best metric: {metric_for_best}")
+                            best_acc = metric_for_best
+                            is_best = True
+                        ckpt_dir = save_checkpoint(run_dir, self.model_manager.model, 
+                                            optimizer=optimizer,
+                                            scheduler=scheduler,
+                                            scaler=None,
+                                            tokenizer=self.model_manager.tokenizer,
+                                            epoch=epoch,
+                                            is_best=is_best,
+                                            max_to_keep=self.config.SAVE_TOTAL_LIMIT
+                                            )
+            if self.config.LOAD_BEST_MODEL_AT_END:
+                best_ckpt = os.path.join(run_dir, "checkpoints", "best")
+                _ = load_checkpoint(best_ckpt, model=self.model_manager.model, map_location="auto", strict=True, load_rng=False)
+                print(f"✅ Loaded best model from: {best_ckpt}")
+
+            if self.config.SAVE_MODEL:
+                if self.config.LOAD_BEST_MODEL_AT_END:
+                    print(f"saving best model to: {os.path.join(run_dir, 'export')}")
+                else:
+                    print(f"saving last model to: {os.path.join(run_dir, 'export')}")
+                save_dir = os.path.join(run_dir, "export")
+                _clean_dir(save_dir)
+                save_pretrained(self.model_manager.model, save_dir)
+                self.model_manager.tokenizer.save_pretrained(save_dir)
+                print(f"✅ model saved!")

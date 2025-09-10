@@ -15,7 +15,7 @@ class SettingsConfig:
     # =============================================================================
     
     # Base data path
-    DATA_DISK_PATH = os.getenv("DATA_DISK_PATH", None)
+    DATA_DISK_PATH = None
 
     # Transformers cache directory
     TRANSFORMERS_CACHE = os.getenv("TRANSFORMERS_CACHE", None)
@@ -73,7 +73,7 @@ class SettingsConfig:
             if value:
                 os.environ[key] = str(value)
         
-        print("✅ Environment setup completed!")
+        print("Environment setup completed!")
         
     def login_huggingface(cls):
         """Login to Hugging Face if token is provided"""
@@ -83,10 +83,10 @@ class SettingsConfig:
                 if cls.HF_ENDPOINT is not None:
                     os.environ["HF_ENDPOINT"] = cls.HF_ENDPOINT
                 login(token=cls.HF_TOKEN)
-                print("✅ Hugging Face login completed!")
+                print("Hugging Face login completed!")
             except ImportError:
-                print("⚠️ huggingface_hub not installed, skipping login")
+                print("huggingface_hub not installed, skipping login")
             except Exception as e:
-                print(f"⚠️ Hugging Face login failed: {e}")
+                print(f"Hugging Face login failed: {e}")
         else:
-            print("ℹ️  No HF token provided, skipping login")
+            print("No HF token provided, skipping login")

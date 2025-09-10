@@ -12,10 +12,10 @@ def register_layer(name: str):
     return decorator
 
 def build_layer(spec: Dict[str, Any]):
-    block_type = spec.get("type")
-    if block_type not in LAYER_REGISTRY:
-        raise ValueError(f"Unknown block type: {block_type}")
-    cls = LAYER_REGISTRY[block_type]
+    layer_type = spec.get("type")
+    if layer_type not in LAYER_REGISTRY:
+        raise ValueError(f"Unknown layer type: {layer_type}")
+    cls = LAYER_REGISTRY[layer_type]
     return cls(**{k: v for k, v in spec.items() if k != "type"})
 
 

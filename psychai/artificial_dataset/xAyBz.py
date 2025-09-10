@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 import json
 import numpy as np
-from ..tokenizer.tokenizer import build_tokenizer
+from ..tokenizer.tokenizer import create_custom_tokenizer, wrap_tokenizer
 
 class XAYBZ:
     def __init__(self,
@@ -154,6 +154,22 @@ class XAYBZ:
                         "label": label,
                     }
                     f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def load_xaybz(self):
+        for i, doc in enumerate(self.generated_document_list):
+            group = self.generated_document_group_list[i]
+            labels = self.generated_document_labels_list[i]
+            assert len(doc) == len(labels), "Document and labels must have the same length"
+            for sent_id, (sentence, label) in enumerate(zip(doc, labels)):
+                row = {
+                    "doc_id": i,
+                    "sent_id": sent_id,
+                    "group": group,
+                    "text": " ".join(sentence),
+                    "tokens": sentence,
+                    "label": label,
+                }
+                yield row
 
     def create_dataset(self):
         self.create_vocabulary()
@@ -378,15 +394,10 @@ class XAYBZ:
             self.index_to_subcategory[idx] = s
 
     def build_tokenizer(self):
-        self.tokenizer = build_tokenizer(
-            mode="word",
-            vocab_size=self.generated_vocabulary_size,
-            vocab=self.generated_vocab_index_dict,
-            pad_token=self.special_tokens_dict["<pad>"],
-            unk_token=self.special_tokens_dict["<unk>"],
-            bos_token=self.special_tokens_dict["<bos>"],
-            eos_token=self.special_tokens_dict["<eos>"],
+        self.tokenizer = create_custom_tokenizer(
+            vocab=self.generated_vocab_index_dict
         )
+        self.tokenizer = wrap_tokenizer(self.tokenizer)
 
     def create_vocab_pair_list(self):
         # validate
@@ -513,7 +524,7 @@ class XAYBZ:
                         t_inst = self.index_to_subcategory[i]  # 1-based
                         legal = self.legal_ab_matrix_by_cat[cat][t_inst - 1, a_inst - 1]
                         labels[i] = "B_Legal" if legal == 1 else "B_Omitted"
-        return labels,
+        return labels
 
     def assign_legality_to_sentence(self, sentence: list[str]):
         a_tok = next(t for t in sentence if t and t[0] == "A")
