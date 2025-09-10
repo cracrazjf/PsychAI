@@ -57,20 +57,20 @@ class LLM_Trainer:
         else:
             eval_dataset = None
 
-        data_type = self.config.DATA_TYPE
+        data_format = self.config.DATA_FORMAT
         ESO_TOKEN = self.model_manager.tokenizer.eos_token
 
         if not isinstance(train_dataset[0], dict):
             raise ValueError("train_data must be a list of dictionaries")
 
-        if data_type == "chat":
+        if data_format == "chat":
             train_dataset = train_dataset.map(self._format_chat_prompt, batched=True)
-        elif data_type == "instruction":
+        elif data_format == "instruction":
             train_dataset = train_dataset.map(self._format_instruction_prompt, 
                                               fn_kwargs={"prompt_template": prompt_template, 
                                               "ESO_TOKEN": ESO_TOKEN}, batched=True)
         else:
-            raise ValueError("Invalid data type")
+            raise ValueError("Invalid data format")
         
         print("printing examples of training data:")
         for i in range (3):
@@ -78,14 +78,14 @@ class LLM_Trainer:
             print("--------------------------------")
 
         if eval_dataset is not None:
-            if data_type == "chat":
+            if data_format == "chat":
                 eval_dataset = eval_dataset.map(self._format_chat_prompt, batched=True)
-            elif data_type == "instruction":
+            elif data_format == "instruction":
                 eval_dataset = eval_dataset.map(self._format_instruction_prompt, 
                                                 fn_kwargs={"prompt_template": prompt_template, 
                                                 "ESO_TOKEN": ESO_TOKEN}, batched=True)
             else:
-                raise ValueError("Invalid data type")
+                raise ValueError("Invalid data format")
 
         return train_dataset, eval_dataset
 
@@ -136,7 +136,7 @@ class LLM_Trainer:
                 optim=self.config.OPTIMIZER,
                 weight_decay=self.config.WEIGHT_DECAY,
                 lr_scheduler_type=self.config.LR_SCHEDULER,
-                seed=self.config.RANDOM_STATE,
+                seed=self.config.RANDOM_SEED,
                 output_dir=self.config.OUTPUT_DIR,
                 report_to=self.config.REPORT_TO,
                 save_strategy=self.config.SAVE_STRATEGY,

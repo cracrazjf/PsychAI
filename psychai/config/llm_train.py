@@ -12,12 +12,12 @@ class LLM_TrainConfig:
 
     # Data
     DATA_NAME = None
-    DATA_TYPE = None
+    DATA_FORMAT = None
     TRAIN_DATA_PATH = None
     EVAL_DATA_PATH = None
 
     # Random State
-    RANDOM_STATE = 66
+    RANDOM_SEED = 66
 
     # Model
     USE_UNSLOTH = True
