@@ -1,7 +1,7 @@
 from typing import Dict, Optional, List
 from torch import nn
 from transformers import PreTrainedTokenizerFast
-from psychai.nn_builder.load_api import from_pretrained, load_config, build_spec_from_config
+from psychai.nn_builder.io import from_pretrained, load_config, build_spec_from_config
 from psychai.nn_builder.nn_builder import CausalLMWrapper, Model
 from psychai.tokenizer.tokenizer import print_tokenizer
 import torch
@@ -71,9 +71,9 @@ class LM_ModelManager:
         print("✅ Cache cleared")
 
 def load_custom_model(model_path: str, tokenizer_path: str, task: str = "causal_lm"):
-    print(f"🚀 Loading model from {model_path} and tokenizer from {tokenizer_path}")
+    print(f"Loading model from {model_path} and tokenizer from {tokenizer_path}")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    print(f"😎 Tokenizer loaded")
+    print(f"Tokenizer loaded")
     print_tokenizer(tokenizer)
 
     task_map = {
@@ -83,14 +83,15 @@ def load_custom_model(model_path: str, tokenizer_path: str, task: str = "causal_
     try:
         model = from_pretrained(model_path)
     except Exception as e:
-        print(f"‼️ Model not found, rebuilding model from config")
+        print(e)
+        print(f"Model not found, rebuilding model from config")
         config = load_config(model_path)
         model = build_spec_from_config(config)  
         model = Model(model)
-    print(f"😎 Model loaded")
+    print(f"Model loaded")
     print(model.summary())
     model = ctor(model)
-    print(f"😶‍🌫️ Model wrapped with {ctor}")
+    print(f"Model wrapped with {ctor}")
     return tokenizer, model
 
 def load_hf_model(model_name: str, 

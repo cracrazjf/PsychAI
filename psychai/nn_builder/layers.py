@@ -11,6 +11,7 @@ def register_layer(name: str):
         return cls
     return decorator
 
+
 def build_layer(spec: Dict[str, Any]):
     layer_type = spec.get("type")
     if layer_type not in LAYER_REGISTRY:
@@ -166,7 +167,12 @@ class LayerNormLayer(Layer):
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         outputs = {}
-        outputs["hidden"] = self.ln(inputs["hidden"])
+        if inputs.get("hidden", None) is not None:
+            outputs["hidden"] = self.ln(inputs["hidden"])
+        else:
+            outputs["hidden"] = self.ln(inputs["embeddings"])
+        if inputs.get("attention_mask", None) is not None:
+            outputs["attention_mask"] = inputs["attention_mask"]
         return outputs
 
 
@@ -203,6 +209,7 @@ class EmbeddingLayer(Layer):
         embedding_dim: int,
         kind: str = "learned",   # 'learned' or 'one_hot'
         dtype: torch.dtype = torch.float32,
+        pass_attention_mask: bool = False,
     ):
         super().__init__()
         assert kind in ("learned", "one_hot"), "kind must be 'learned' or 'one_hot'"
@@ -210,7 +217,7 @@ class EmbeddingLayer(Layer):
         self.embedding_dim = int(embedding_dim)
         self.kind = kind
         self.dtype = dtype
-
+        self.pass_attention_mask = pass_attention_mask
         if self.kind == "learned":
             self.emb = nn.Embedding(self.num_embeddings, self.embedding_dim)
         else:
@@ -241,36 +248,25 @@ class EmbeddingLayer(Layer):
                 mask = inputs["attention_mask"].to(dtype=out.dtype, device=out.device)
                 mask = mask.unsqueeze(-1)
                 out = out * mask
-
-        return {"embeddings": out}
+        outputs = {}
+        outputs["embeddings"] = out
+        if self.pass_attention_mask:
+            outputs["attention_mask"] = inputs.get("attention_mask", None)
+        return outputs
 
 
 @register_layer("positional_embedding")
 class PositionalEmbeddingLayer(Layer):
-    """
-    Adds positional information to `inputs['hidden']`.
-
-    Inputs:
-      - inputs['hidden']: (B, T, H) if batch_first=True else (T, B, H)
-      - (optional) inputs['position_ids']: (B, T) integer positions in [0, max_position_embeddings)
-
-    Behavior:
-      - kind='learned': learnable nn.Embedding(max_position_embeddings, hidden_size)
-      - kind='sinusoidal': fixed sinusoidal table (registered buffer)
-
-    Outputs:
-      - inputs['hidden']: same shape as input, with positions added (and optional dropout)
-    """
     def __init__(
         self,
         hidden_size: int,
         max_position_embeddings: int = 2048,
-        kind: str = "learned",            # 'learned' or 'sinusoidal'
+        kind: str = "learned",
         dropout: float = 0.0,
         batch_first: bool = True,
     ):
         super().__init__()
-        assert kind in ("learned", "sinusoidal"), "kind must be 'learned' or 'sinusoidal'"
+        assert kind in ("learned", "fixed"), "kind must be 'learned' or 'fixed'"
         self.hidden_size = hidden_size
         self.max_position_embeddings = max_position_embeddings
         self.kind = kind
@@ -293,14 +289,14 @@ class PositionalEmbeddingLayer(Layer):
     @property
     def requires(self):
         # 'position_ids' is optional
-        return ("hidden",)
+        return ("embeddings",)
 
     @property
     def provides(self):
-        return ("position_embeddings",)
+        return ("embeddings",)
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        h = inputs["hidden"]  # (B,T,H) or (T,B,H)
+        h = inputs["embeddings"]  # (B,T,H) or (T,B,H)
         if not self.batch_first:
             h = h.transpose(0, 1)  # -> (B,T,H)
 
@@ -326,36 +322,18 @@ class PositionalEmbeddingLayer(Layer):
         else:
             pos = self.pos_buffer.index_select(0, pos_ids.reshape(-1)).view(B, T, H).to(h.dtype)  # (B,T,H)
 
-        h = h + pos
-        h = self.drop(h)
-
         if not self.batch_first:
             h = h.transpose(0, 1)  # back to (T,B,H)
 
         outputs = {}
-        outputs["position_embeddings"] = h
+        outputs["embeddings"] = h
+        if inputs.get("attention_mask", None) is not None:
+            outputs["attention_mask"] = inputs["attention_mask"]
         return outputs
 
 
 @register_layer("causal_mask")
 class CausalMaskLayer(Layer):
-    """
-    Produces a boolean lower-triangular (causal) keep-mask for autoregressive attention.
-
-    - True  => keep (allowed to attend)
-    - False => mask (blocked; attention layer will turn these into -inf)
-
-    Inputs (either path works, used only to infer B and T):
-      - inputs['hidden']: (B, T, H)  if batch_first=True  else (T, B, H)
-      - or inputs['q']:     (B, heads, T, Dh)
-
-    Hyperparameters:
-      - max_position_embeddings: precompute a (max_pos x max_pos) tril buffer to slice from
-      - batch_first: whether 'hidden' uses (B,T,*) layout
-
-    Provides:
-      - inputs['causal_mask']: (B, 1, T, T) boolean keep-mask
-    """
     def __init__(self, max_position_embeddings: int = 4096, batch_first: bool = True):
         super().__init__()
         self.max_position_embeddings = max_position_embeddings
@@ -365,7 +343,6 @@ class CausalMaskLayer(Layer):
 
     @property
     def requires(self):
-        # Accept either hidden or q to infer (B,T)
         return ("hidden", "q")
 
     @property
@@ -393,36 +370,13 @@ class CausalMaskLayer(Layer):
             )
         tril_T = self.tril_buffer[:T, :T].to(device=device)  # (T,T) bool keep-mask
         mask = tril_T.view(1, 1, T, T).expand(B, 1, T, T)    # (B,1,T,T) bool
-        outputs = {}
-        outputs["causal_mask"] = mask
+        outputs = {**inputs}
+        outputs["causal_mask"] = mask  # (B,1,T,T) bool
         return outputs
 
 
 @register_layer("qkv_projection")
 class QKVProjectionLayer(Layer):
-    """
-    Projects `inputs['hidden']` into query, key, value tensors and reshapes to multi-head form.
-
-    Inputs:
-      - inputs['hidden']: (B, T, H) if batch_first=True else (T, B, H)
-
-    Hyperparameters:
-      - hidden_size: model dimension H (must match last dim of inputs['hidden'])
-      - num_heads: number of attention heads
-      - head_dim: per-head dim (optional; if None, inferred as hidden_size // num_heads)
-      - bias: include bias in linear projections (default: True)
-      - fused: if True, use a single Linear(H -> 3H) and split; else use three separate Linear layers
-      - batch_first: whether inputs come as (B, T, H) (default True)
-
-    Provides:
-      - inputs['q']: (B, num_heads, T, head_dim)
-      - inputs['k']: (B, num_heads, T, head_dim)
-      - inputs['v']: (B, num_heads, T, head_dim)
-
-    Notes:
-      - This layer does NOT apply any masking or scaling. It only produces Q/K/V.
-      - It leaves inputs['hidden'] untouched for downstream residuals.
-    """
     def __init__(
         self,
         hidden_size: int,
@@ -448,7 +402,6 @@ class QKVProjectionLayer(Layer):
         self.batch_first = batch_first
         self.fused = fused
         self.sublayers = nn.ModuleDict()
-        self.watch_sub = {}
 
         if fused:
             # single projection to 3H, then split
@@ -473,11 +426,11 @@ class QKVProjectionLayer(Layer):
         """
         B, T, H = x.shape
         x = x.view(B, T, self.num_heads, self.head_dim)
-        x = x.permute(0, 2, 1, 3)  # (B, heads, T, head_dim)
+        x = x.permute(0, 2, 1, 3).contiguous()  # (B, heads, T, head_dim)
         return x
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        h = inputs["hidden"]  # (B, T, H) or (T, B, H)
+        h = inputs.get("hidden", inputs.get("embeddings"))
         if not self.batch_first:
             h = h.transpose(0, 1)  # -> (B, T, H)
 
@@ -487,56 +440,29 @@ class QKVProjectionLayer(Layer):
 
         if self.fused:
             qkv = self.sublayers["w_qkv"](h)                      # (B, T, 3H)
-            self.watch_sub["w_qkv"] = qkv
-            q, k, v = torch.chunk(qkv, 3, dim=-1)    # each (B, T, H)
+            q, k, v = torch.chunk(qkv, 3, dim=-1)                 # each (B, T, H)
         else:
             q = self.sublayers["w_q"](h)                          # (B, T, H)
-            self.watch_sub["w_q"] = q
             k = self.sublayers["w_k"](h)                          # (B, T, H)
-            self.watch_sub["w_k"] = k
             v = self.sublayers["w_v"](h)                          # (B, T, H)
-            self.watch_sub["w_v"] = v
 
         q = self._reshape_to_heads(q)                # (B, heads, T, head_dim)
         k = self._reshape_to_heads(k)                # (B, heads, T, head_dim)
         v = self._reshape_to_heads(v)                # (B, heads, T, head_dim)
 
-        # Store outputs; keep 'hidden' unchanged in the dict.
         outputs = {}
         outputs["q"] = q
         outputs["k"] = k
         outputs["v"] = v
+        if inputs.get("attention_mask", None) is not None:
+            outputs["attention_mask"] = inputs["attention_mask"]
 
         return outputs
 
 
 @register_layer("scaled_dot_product_attention")
 class ScaledDotProductAttentionLayer(Layer):
-    """
-    Computes: softmax( Q K^T / sqrt(Dh) + masks ) V
 
-    Inputs (required):
-      - inputs['q']: (B, H, Tq, Dh)
-      - inputs['k']: (B, H, Tk, Dh)
-      - inputs['v']: (B, H, Tk, Dh)
-
-    Optional masks (either or both):
-      - inputs['attention_mask']: padding mask broadcastable to (B, 1, Tq, Tk)
-          * boolean: True=keep, False=mask
-          * additive float: 0=keep, -inf=mask (added to logits)
-          * (B, Tk) will be expanded to (B, 1, Tq, Tk)
-      - inputs['causal_mask']: causal mask broadcastable to (B, 1, Tq, Tk)
-          * boolean or additive float (same semantics)
-
-    Hyperparams:
-      - head_dim: Dh (for scaling)
-      - dropout: attention prob. dropout
-      - return_attn_weights: if True, also provides 'attn_weights' (B, H, Tq, Tk)
-
-    Provides:
-      - inputs['context']: (B, Tq, H*Dh)
-      - (optional) inputs['attn_weights']: (B, H, Tq, Tk)
-    """
     def __init__(self, head_dim: int, dropout: float = 0.0, return_attn_weights: bool = False):
         super().__init__()
         self.head_dim = head_dim
@@ -551,16 +477,13 @@ class ScaledDotProductAttentionLayer(Layer):
     def provides(self): return ("context",)
 
     def _expand_bt_to_b1tqt(self, mask: torch.Tensor, B: int, Tq: int, Tk: int) -> torch.Tensor:
-        # Expand (B, Tk) → (B, 1, Tq, Tk)
         if mask.dim() == 2 and mask.shape == (B, Tk):
             return mask.view(B, 1, 1, Tk).expand(B, 1, Tq, Tk)
-        return mask  # assume already broadcastable
+        return mask
 
     def _apply_mask(self, scores: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        # Boolean mask: False positions get -inf
         if mask.dtype == torch.bool:
             return scores.masked_fill(~mask, float("-inf"))
-        # Additive float mask: directly add (expect 0 for keep, -inf for masked)
         return scores + mask.to(dtype=scores.dtype, device=scores.device)
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -597,10 +520,10 @@ class ScaledDotProductAttentionLayer(Layer):
         attn = self.drop(attn)
 
         # Context per head: (B,H,Tq,Dh)
-        ctx_h = torch.matmul(attn, v)
+        ctx_h = torch.matmul(attn, v)  # (B,H,Tq,Dh)
 
         # Merge heads → (B,Tq,H*Dh)
-        context = ctx_h.permute(0, 2, 1, 3).contiguous().view(B, Tq, H * Dh)
+        context = ctx_h.permute(0, 2, 1, 3).contiguous().view(B, Tq, H * Dh)  # (B,Tq,H*Dh)
 
         outputs = {}
         outputs["context"] = context
@@ -654,7 +577,7 @@ class SaveResidualLayer(Layer):
         return ("residual",)
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        outputs = {}
+        outputs = {**inputs}
         outputs["residual"] = inputs["hidden"]
         return outputs
 
@@ -683,97 +606,83 @@ class ResidualAddLayer(Layer):
         return outputs
 
 
-@register_layer("transformer_attention_block")
-class TransformerAttentionBlock(Layer):
-    def __init__(
-        self,
-        hidden_size: int,
-        num_heads: int,
-        head_dim: Optional[int] = None,
-        attn_dropout: float = 0.0,
-        proj_bias: bool = True,
-        batch_first: bool = True,
-        return_attn_weights: bool = False,
-        # New toggles:
-        use_norm: bool = True,
-        norm_position: str = "pre",  # 'pre' or 'post'
-        use_residual: bool = True,
-        residual_alpha: float = 1.0,
-    ):
+@register_layer("lstm_cell")
+class LSTMCellLayer(Layer):
+    def __init__(self, input_size: int, hidden_size: int):
         super().__init__()
-        self.sublayers = nn.ModuleDict()
+        self.input_size = input_size
         self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.head_dim = head_dim if head_dim is not None else (hidden_size // num_heads)
-        if hidden_size != self.head_dim * num_heads:
-            raise ValueError(
-                f"hidden_size ({hidden_size}) must equal num_heads*head_dim "
-                f"({num_heads}*{self.head_dim}={num_heads*self.head_dim})."
-            )
-        if norm_position not in ("pre", "post"):
-            raise ValueError("norm_position must be 'pre' or 'post'")
-
-        self.batch_first = batch_first
-        self.return_attn_weights = return_attn_weights
-        self.use_norm = use_norm
-        self.norm_position = norm_position
-        self.use_residual = use_residual
-
-        # submodules
-        if use_residual:
-            self.sublayers["save_resid"] = SaveResidualLayer()
-        if use_norm:
-            self.sublayers["layernorm"] = LayerNormLayer(normalized_shape=hidden_size)
-
-        self.sublayers["qkv"] = QKVProjectionLayer(
-            hidden_size=hidden_size,
-            num_heads=num_heads,
-            head_dim=self.head_dim,
-            bias=proj_bias,
-            fused=True,
-            batch_first=batch_first,
-        )
-        self.sublayers["attn"] = ScaledDotProductAttentionLayer(
-            head_dim=self.head_dim,
-            dropout=attn_dropout,
-            return_attn_weights=return_attn_weights,
-        )
-        self.sublayers["out_proj"] = OutProjectionLayer(hidden_size=hidden_size, bias=proj_bias, batch_first=batch_first)
-        if use_residual:
-            self.sublayers["resid_add"] = ResidualAddLayer(alpha=float(residual_alpha))
+        self.sublayers = nn.ModuleDict()
+        self.sublayers["gates"] = LinearLayer(in_features=input_size+hidden_size, out_features=hidden_size*4, bias=True)
+        with torch.no_grad():
+            self.sublayers["gates"].linear.bias[self.hidden_size:2*self.hidden_size].fill_(1.0)
 
     @property
-    def requires(self): return ("hidden",)
+    def requires(self): return ("embeddings", "last_hidden")
 
     @property
-    def provides(self): return ("hidden",)
+    def provides(self): return ("hidden", "last_hidden")
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        x = dict(inputs)
-        # Optionally save residual (only needed if we’ll add it back)
-        if self.use_residual:
-            residual = self.sublayers["save_resid"](inputs)
+        (h_prev, c_prev) = inputs["last_hidden"]
+        x = inputs["embeddings"]
+        z = self.sublayers["gates"]({"hidden": torch.cat([x, h_prev], dim=-1)})["hidden"]
+        i, f, g, o = z.chunk(4, dim=-1)
+        i, f, o = torch.sigmoid(i), torch.sigmoid(f), torch.sigmoid(o)
+        g = torch.tanh(g)
 
-        # PRE-LN path
-        if self.use_norm and self.norm_position == "pre":
-            x = self.sublayers["layernorm"](x)  
-
-        # QKV → Attention → Out-proj
-        x = self.sublayers["qkv"](x)
-        x = self.sublayers["attn"](x)      # consumes masks if present in `inputs`
-        x = self.sublayers["attn"](x)
-        x = self.sublayers["out_proj"](x)
-
-        # Residual add (if enabled)
-        if self.use_residual:
-            x = self.sublayers["resid_add"]({"hidden": x["hidden"], "residual": residual["residual"]})
-        # POST-LN path
-        if self.use_norm and self.norm_position == "post":
-            x = self.sublayers["layernorm"](x)
+        c_t = f * c_prev + i * g
+        h_t = o * torch.tanh(c_t)
         outputs = {}
-        outputs["hidden"] = x["hidden"]
-        if "attn_mask" in inputs:
-            outputs["attn_mask"] = inputs["attn_mask"]
+        outputs["hidden"] = h_t
+        outputs["last_hidden"] = (h_t, c_t)
+        return outputs
+
+
+@register_layer("custom_lstm")
+class CustomLSTMLayer(Layer):
+    def __init__(self, input_size: int, hidden_size: int, batch_first: bool = True):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.sublayers = nn.ModuleDict()
+        self.sublayers["lstm_cell"] = LSTMCellLayer(input_size=input_size, hidden_size=hidden_size)
+        self.batch_first = batch_first
+
+    @property
+    def requires(self): return ("embeddings")
+
+    @property
+    def provides(self): return ("hidden", "last_hidden")
+
+    def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        x = inputs["embeddings"]
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+
+        B, T, _ = x.shape
+        last_hc = inputs.get("last_hidden", None)
+        if last_hc is None:
+            last_h = torch.zeros(B, self.hidden_size, device=x.device, dtype=x.dtype)
+            last_c = torch.zeros(B, self.hidden_size, device=x.device, dtype=x.dtype)
+        else:
+            last_h, last_c = last_hc
+            if last_h.dim() >= 2 and last_h.shape[0] != B:
+                last_h = last_h[:B, ...].contiguous()
+            if last_c.dim() >= 2 and last_c.shape[0] != B:
+                last_c = last_c[:B, ...].contiguous()
+        outs = []
+        for t in range(T):
+            x_t = x[:, t, :]
+            out = self.sublayers["lstm_cell"]({"embeddings": x_t, "last_hidden": (last_h, last_c)})
+            outs.append(out["hidden"].unsqueeze(1))
+            last_h, last_c = out["last_hidden"]
+        h = torch.cat(outs, dim=1)
+        if not self.batch_first:
+            h = h.transpose(0, 1)
+        outputs = {}
+        outputs["hidden"] = h
+        outputs["last_hidden"] = (last_h, last_c)
         return outputs
 
 
@@ -796,7 +705,7 @@ class LSTMLayer(Layer):
         x = inputs["embeddings"]
         last_hidden = inputs.get("last_hidden", None)
         if last_hidden is not None:
-            h, (h_n, c_n) = self.lstm(x, last_hidden)   # last_hidden = (h0, c0)
+            h, (h_n, c_n) = self.lstm(x, last_hidden)
         else:
             h, (h_n, c_n) = self.lstm(x)
         outputs = {}
@@ -909,10 +818,10 @@ class JordanLayer(Layer):
         h_seq, y_seq = [], []
         for t in range(T):
             x_t = x[:, t, :]    
-            x_t = self.sublayers["in_linear"]({"hidden": x_t})["hidden"]                              # (B,H)
-            yh  = self.sublayers["y_linear"]({"hidden": y_t})["hidden"]  # (B,H)
-            h_t = self.sublayers["act"]({"hidden": x_t + yh})["hidden"]                      # (B,H)
-            y_t = self.sublayers["out_linear"]({"hidden": h_t})["hidden"]  # (B,O)
+            x_t = self.sublayers["in_linear"]({"hidden": x_t})["hidden"]
+            yh  = self.sublayers["y_linear"]({"hidden": y_t})["hidden"]
+            h_t = self.sublayers["act"]({"hidden": x_t + yh})["hidden"]
+            y_t = self.sublayers["out_linear"]({"hidden": h_t})["hidden"]
 
             h_seq.append(h_t.unsqueeze(1))                # (B,1,H)
             y_seq.append(y_t.unsqueeze(1))                # (B,1,O)

@@ -48,13 +48,15 @@ class Model(nn.Module):
             self.layers_by_name[name] = layer
             self.order.append(name)
 
-    def forward(self, inputs: dict, state: dict | None = None, detach_state: bool = False) -> dict:
+    def forward(self, inputs: dict, state: dict | None = None, detach_state: bool = False, return_repr: bool = False) -> dict:
+        representations = {}
         if state is None:
             for name in self.order:
                 layer = self.layers_by_name[name]
                 outputs = layer(inputs)
                 inputs = outputs
-            return inputs
+                representations[name] = outputs
+            return inputs, representations
         
         else:
             # this is the training mode for stateful rnn models
@@ -70,7 +72,6 @@ class Model(nn.Module):
                 if "last_hidden" in outputs:
                     last_hidden = outputs["last_hidden"]
                     if detach_state:
-                        # this is for LSTM layer
                         if isinstance(last_hidden, tuple):
                             last_hidden = tuple(t.detach() if hasattr(t, "detach") else t for t in last_hidden)
                         elif hasattr(last_hidden, "detach"):
@@ -84,7 +85,9 @@ class Model(nn.Module):
                     next_state[name] = {"last_logits": last_logits}
 
                 inputs = outputs
-            return inputs, next_state
+                if return_repr:
+                    representations[name] = outputs
+            return inputs, next_state, representations
 
     def get_layer(self, name: str) -> nn.Module:
         return self.layers_by_name[name]
@@ -92,22 +95,79 @@ class Model(nn.Module):
     def layer_names(self) -> list[str]:
         return list(self.order)
 
+    def get_weights(self) -> dict:
+        weights = {}
+        for name in self.layer_names():
+            layer = self.get_layer(name)
+            weights[name] = layer.state_dict()
+        
+        def _get_shape_dtype(x: torch.Tensor):
+            shape = tuple(getattr(x, "shape", ()))
+            if hasattr(x, "numel"):
+                try:
+                    numel = int(x.numel())
+                except TypeError:
+                    numel = int(x.numel)
+            elif hasattr(x, "size"):
+                numel = int(x.size if isinstance(x.size, (int,)) else x.size)  # numpy
+            else:
+                numel = 0
+            dtype = getattr(x, "dtype", "unknown")
+            dtype = str(dtype)
+            return shape, numel, dtype
+        
+        def _commas(n: int) -> str:
+            return f"{n:,}"
+        
+        rows = []
+        for name, weight in weights.items():
+            for pname, tensor in weight.items():
+                full_name = f"{name}.{pname}"
+                shape, numel, dtype = _get_shape_dtype(tensor)
+                rows.append((full_name, shape, numel, dtype))
+        headers = ("Layer.Param", "Shape", "#Params", "Dtype")
+
+        name_w = max(len(headers[0]), *(len(r[0]) for r in rows)) if rows else len(headers[0])
+        shape_w = max(len(headers[1]), *(len(str(r[1])) for r in rows)) if rows else len(headers[1])
+        num_w   = max(len(headers[2]), *(len(_commas(r[2])) for r in rows)) if rows else len(headers[2])
+        dtype_w = max(len(headers[3]), *(len(str(r[3])) for r in rows)) if rows else len(headers[3])
+
+        line = f"{headers[0]:<{name_w}}  {headers[1]:<{shape_w}}  {headers[2]:>{num_w}}  {headers[3]:<{dtype_w}}"
+        sep  = "-" * len(line)
+        out_lines = [line, sep]
+
+        for name, shape, numel, dtype in rows:
+            out_lines.append(
+                f"{name:<{name_w}}  {str(shape):<{shape_w}}  {_commas(numel):>{num_w}}  {str(dtype):<{dtype_w}}"
+            )
+        print("\n".join(out_lines))
+        return weights
+
     def summary(self) -> str:
         from torch import nn
 
         def _num_params(m: nn.Module) -> int:
             return sum(p.numel() for p in m.parameters())
+        
+        def _collect_sublayers(layer: nn.Module, name: str) -> list[nn.Module]:
+            rows = []
+            rows.append([name, layer.__class__.__name__, f"{_num_params(layer):,}"])
+            # if it has children, recurse
+            if hasattr(layer, "sublayers"):
+                for cname, child in layer.sublayers.items():
+                    qname = f"{name}.{cname}" if name else cname
+                    rows.extend(_collect_sublayers(child, qname))
+            return rows
 
         rows = []
         header = ["Layer", "Type", "Params"]
         for name in self.layer_names():
             layer = self.get_layer(name)
             pcount = _num_params(layer)
-            rows.append([name, layer.__class__.__name__, f"{pcount:,}"])
             if hasattr(layer, "sublayers"):
-                for cname, child in layer.sublayers.items():
-                    qname = f"{name}.{cname}"
-                    rows.append([qname, child.__class__.__name__, f"{_num_params(child):,}"])
+                rows.extend(_collect_sublayers(layer, name))
+            else:
+                rows.append([name, layer.__class__.__name__, f"{pcount:,}"])
 
         colw = [max(len(str(x)) for x in col) for col in zip(header, *rows)]
         def _fmt_line(cols): return "  ".join(str(c).ljust(w) for c, w in zip(cols, colw))
@@ -126,14 +186,17 @@ class CausalLMWrapper(nn.Module):
                 labels: Optional[torch.Tensor]=None, 
                 state: dict | None = None, 
                 detach_state: bool = False, 
+                return_repr: bool = False,
                 **kwargs):
 
         if state is None:
-            out = self.model({"input_ids": input_ids, "attention_mask": attention_mask})
+            out, representations = self.model({"input_ids": input_ids, "attention_mask": attention_mask},
+                                             return_repr=return_repr)
         else:
-            out, next_state = self.model({"input_ids": input_ids, "attention_mask": attention_mask},
+            out, next_state, representations = self.model({"input_ids": input_ids, "attention_mask": attention_mask},
                              state=state,
                              detach_state=detach_state,
+                             return_repr=return_repr,
                              **kwargs)
         logits = out["logits"]
         loss = None
@@ -146,6 +209,6 @@ class CausalLMWrapper(nn.Module):
             loss = self.loss_fn(shift_logits.view(-1, shift_logits.size(-1)),
                                 shift_labels.view(-1))
         if state is None:
-            return {"loss": loss, "logits": shift_logits, "labels": shift_labels}
+            return {"loss": loss, "logits": shift_logits, "labels": shift_labels, "representations": representations}
         else:
-            return {"loss": loss, "logits": shift_logits, "labels": shift_labels, "state": next_state}
+            return {"loss": loss, "logits": shift_logits, "labels": shift_labels, "state": next_state, "representations": representations}

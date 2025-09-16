@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import defaultdict
 import json
 import numpy as np
-from ..tokenizer.tokenizer import create_custom_tokenizer, wrap_tokenizer
+from ..tokenizer.tokenizer import create_custom_tokenizer, wrap_tokenizer, make_pretokenizer
 
 class XAYBZ:
     def __init__(self,
@@ -395,7 +395,10 @@ class XAYBZ:
 
     def build_tokenizer(self):
         self.tokenizer = create_custom_tokenizer(
-            vocab=self.generated_vocab_index_dict
+            vocab=self.generated_vocab_index_dict,
+            pretokenizer=make_pretokenizer(
+                use_whitespace=True
+            )
         )
         self.tokenizer = wrap_tokenizer(self.tokenizer)
 

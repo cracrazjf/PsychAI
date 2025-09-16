@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any
 import numpy as np
 import torch
 
+__all__ = ["save_checkpoint", "load_checkpoint", "to_serializable", "clean_dir"]
+
 try:
     from safetensors.torch import save_file as _save_safetensors
     from safetensors.torch import load_file as _load_safetensors
@@ -23,14 +25,14 @@ def _atomic_write_json(dst_path: str, obj: Dict[str, Any]) -> None:
     data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
     _atomic_write_bytes(dst_path, data)
 
-def _to_serializable(v):
+def to_serializable(v):
     if hasattr(v, "item"):
         return v.item()
     if isinstance(v, np.ndarray):
         return v.tolist()
     return v
 
-def _clean_dir(path: str) -> None:
+def clean_dir(path: str) -> None:
     if os.path.islink(path) or os.path.isfile(path):
         os.unlink(path)
     elif os.path.isdir(path):
@@ -42,7 +44,6 @@ def _tensor_state_dict_cpu_only(state: Dict[str, torch.Tensor]) -> Dict[str, tor
         if torch.is_tensor(v):
             out[k] = v.detach().cpu()
     return out
-
 
 def save_checkpoint(
     run_dir: str,
@@ -102,25 +103,25 @@ def save_checkpoint(
         "time_saved_unix": int(time.time()),
         "python_version": sys.version.split()[0],
         "torch_version": torch.__version__,
-        "metrics": {k: _to_serializable(v) for (k, v) in (metrics or {}).items()},
+        "metrics": {k: to_serializable(v) for (k, v) in (metrics or {}).items()},
     }
     _atomic_write_json(os.path.join(ckpt_dir, "trainer_state.json"), trainer_state)
 
     # 5) Tokenizer snapshot (optional; small but handy to keep with ckpt)
     if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
         tok_dir = os.path.join(ckpt_dir, "tokenizer")
-        _clean_dir(tok_dir)
+        clean_dir(tok_dir)
         tokenizer.save_pretrained(tok_dir)
 
     # 6) Update 'last/' mirror
     last_dir = os.path.join(ckpt_root, "last")
-    _clean_dir(last_dir)
+    clean_dir(last_dir)
     shutil.copytree(ckpt_dir, last_dir)
 
     # 7) Update 'best/' mirror if requested
     if is_best:
         best_dir = os.path.join(ckpt_root, "best")
-        _clean_dir(best_dir)
+        clean_dir(best_dir)
         shutil.copytree(ckpt_dir, best_dir)
 
     # 8) Retention policy: keep only newest N epoch_* dirs (preserve mirrors separately)
@@ -129,7 +130,7 @@ def save_checkpoint(
     epoch_dirs_sorted = sorted(epoch_dirs, key=lambda s: int(s.split("_")[1]))
     excess = max(0, len(epoch_dirs_sorted) - max_to_keep)
     for d in epoch_dirs_sorted[:excess]:
-        _clean_dir(os.path.join(ckpt_root, d))
+        clean_dir(os.path.join(ckpt_root, d))
 
     return ckpt_dir
 

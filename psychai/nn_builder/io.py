@@ -4,6 +4,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Tuple, Union, Optional
 
 import torch
+import torch.nn as nn
 
 try:
     from safetensors.torch import save_file as save_safetensors
@@ -102,6 +103,29 @@ def build_config_dict(
     }
     return cfg
 
+def unwrap_model(m: nn.Module) -> nn.Module:
+    while True:
+        # 1) torch.nn wrappers
+        if hasattr(m, "module") and isinstance(getattr(m, "module"), nn.Module):
+            m = m.module
+            continue
+        # 2) your custom wrapper with .model
+        if hasattr(m, "model") and isinstance(getattr(m, "model"), nn.Module):
+            m = m.model
+            continue
+        # 3) PEFT (optional)
+        try:
+            from peft import PeftModel
+            if isinstance(m, PeftModel):
+                base = m.get_base_model()
+                if isinstance(base, nn.Module):
+                    m = base
+                    continue
+        except Exception:
+            pass
+        break
+    return m
+
 # --------- save APIs
 
 def save_config(save_dir: str, config_dict: Dict[str, Any]) -> str:
@@ -151,7 +175,7 @@ def save_pretrained(
     cfg_path = save_config(save_dir, config_dict)
 
     # 2) Save weights
-    sd = model.state_dict()
+    sd = unwrap_model(model).state_dict()
     paths = {"config": cfg_path}
 
     if prefer_safetensors and _HAS_SAFETENSORS:

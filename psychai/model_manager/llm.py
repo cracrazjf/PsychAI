@@ -116,13 +116,13 @@ class LLM_ModelManager:
         if hasattr(self, 'model') and self.model is not None:
             try:
                 del self.model
-                print("✅ Current model deleted")
+                print("Current model deleted")
             except Exception:
                 pass
         if hasattr(self, "tokenizer") and self.tokenizer is not None:
             try:
                 del self.tokenizer
-                print("✅ Current tokenizer deleted")
+                print("Current tokenizer deleted")
             except Exception:
                 pass
         gc.collect()
@@ -131,7 +131,7 @@ class LLM_ModelManager:
         self.reasoning = None
         self.tokenizer = None
         self.model_name = None
-        print("✅ Cache cleared")
+        print("Cache cleared")
 
 def load_model(
     model_name: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", 

@@ -3,7 +3,7 @@ from tokenizers import normalizers as norm
 from tokenizers import Tokenizer
 from tokenizers.models import BPE, WordPiece, Unigram, WordLevel
 from tokenizers.trainers import BpeTrainer, UnigramTrainer, WordLevelTrainer, WordPieceTrainer
-from tokenizers.processors import AddedToken
+from tokenizers import AddedToken
 from transformers import PreTrainedTokenizerFast
 import ftfy
 import re
@@ -361,8 +361,8 @@ def wrap_tokenizer(
     tokenizer: Tokenizer, 
     unk_token="<unk>", 
     pad_token="<pad>", 
-    bos_token="<bos>", 
-    eos_token="<eos>", 
+    bos_token=None, 
+    eos_token=None, 
     sep_token=None, 
     cls_token=None
 ):

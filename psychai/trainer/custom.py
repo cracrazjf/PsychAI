@@ -1,21 +1,22 @@
-from psychai.model_manager.lm_manager import LM_ModelManager
+from psychai.model_manager.language import LM_ModelManager
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForLanguageModeling
-from typing import Tuple
+from typing import Tuple, Optional
 from itertools import chain
 from datasets import Dataset
 import torch
 from torch.optim import AdamW, SGD
-from psychai.trainer.train_utils import _to_serializable, save_checkpoint, load_checkpoint, _clean_dir
-from psychai.nn_builder.save_api import save_pretrained
+from torch.optim.lr_scheduler import StepLR, ExponentialLR
+from psychai.trainer.utils import to_serializable, save_checkpoint, load_checkpoint, clean_dir
+from psychai.nn_builder.io import save_pretrained
 from tqdm import tqdm
 import numpy as np
 from pprint import pprint
 import os
 import json
 
-class NN_Trainer:
+class Custom_Trainer:
     def __init__(self, config):
         self.config = config
         self.model_manager = None
@@ -32,9 +33,9 @@ class NN_Trainer:
         scheduler = None
         if self.config.LEARNING_RATE_SCHEDULER is not None:
             if self.config.LEARNING_RATE_SCHEDULER == "step":
-                scheduler = optimizer.lr_scheduler.StepLR(optimizer, step_size=self.config.LR_STEPS, gamma=self.config.GAMMA)
+                scheduler = StepLR(optimizer, step_size=self.config.LR_STEPS, gamma=self.config.GAMMA)
             elif self.config.LEARNING_RATE_SCHEDULER == "exponential":
-                scheduler = optimizer.lr_scheduler.ExponentialLR(optimizer, gamma=self.config.GAMMA)
+                scheduler = ExponentialLR(optimizer, gamma=self.config.GAMMA)
             else:
                 raise ValueError(f"Unsupported learning rate scheduler: {self.config.LEARNING_RATE_SCHEDULER}")
         return optimizer, scheduler
@@ -42,7 +43,12 @@ class NN_Trainer:
     # language model functions
     def load_lanaguge_model_and_tokenizer(self):
         self.model_manager = LM_ModelManager()
-        self.model_manager.load_model(self.config.MODEL_NAME, self.config.MODEL_PATH, self.config.TASK, self.config.CUSTOMIZED_MODEL, self.config.TOKENIZER_PATH, self.config.TRUST_REMOTE_CODE)
+        self.model_manager.load_model(self.config.MODEL_NAME,
+                                      self.config.MODEL_PATH, 
+                                      self.config.TASK, 
+                                      custom=self.config.CUSTOMIZED_MODEL,
+                                      tokenizer_path=self.config.TOKENIZER_PATH,
+                                      trust_remote_code=self.config.TRUST_REMOTE_CODE)
         
     def tokenize_language_data(self, dataset_path) -> Tuple[Dataset, Dataset, DataCollatorForLanguageModeling]:
         if self.model_manager.tokenizer.pad_token is None: self.model_manager.tokenizer.pad_token = self.model_manager.tokenizer.eos_token
@@ -60,12 +66,12 @@ class NN_Trainer:
             raise ValueError(f"Unsupported task type: {task}")
 
         # Tokenize dataset
-        print(f"📝 tokenizing dataset")
+        print(f"tokenizing dataset")
         tokenized_dataset = dataset.map(tokenize_function, batched=True, batch_size=self.config.DATA_PROCESS_BATCH_SIZE, num_proc=self.config.DATA_PROCESS_NUM_PROC)
 
         return tokenized_dataset, collator
 
-    def create_dataloader(self, dataset, shuffle_dataset, shuffle_dataloader, collator, epoch=66):
+    def create_dataloader(self, dataset, shuffle_dataset, shuffle_dataloader, collator, epoch: Optional[int] = None):
 
         def _concatenate_input_ids_and_attention_mask(dataset):
             input_ids_lists = dataset["input_ids"]
@@ -74,11 +80,11 @@ class NN_Trainer:
             attention = list(chain.from_iterable(attn_mask_lists))
             return {"input_ids": input_ids, "attention_mask": attention}
 
-        def _create_overlapping_sequences(input_ids, attention_mask, sequence_length, pad_token_id, stride = 1):
+        def _create_sliding_windows(input_ids, attention_mask, sequence_length, pad_token_id):
             assert sequence_length > 1, "sequence_length must be >= 2 for causal LM"
             n = len(input_ids)
-            windows_input_ids, windows_attention_mask = [], []
-            for start in range(0, n, stride):
+            windows = {"input_ids": [], "attention_mask": []}
+            for start in range(0, n, 1):
                 end = start + sequence_length
                 ids = input_ids[start:end]
                 msk = attention_mask[start:end]
@@ -89,15 +95,16 @@ class NN_Trainer:
                     ids = ids + [pad_token_id] * pad_len
                     msk = msk + [0] * pad_len
 
-                windows_input_ids.append(ids)
-                windows_attention_mask.append(msk)
+                windows["input_ids"].append(ids)
+                windows["attention_mask"].append(msk)
 
                 if end >= n:
                     break
-            return {"input_ids": windows_input_ids, "attention_mask": windows_attention_mask}
+            return windows
         
-        def _create_nonoverlapping_sequences(input_ids, attention_mask, sequence_length, pad_token_id):
-            blocks = {"input_ids": [], "attention_mask": []}
+        def _create_nonoverlapping_windows(input_ids, attention_mask, sequence_length, pad_token_id):
+            assert sequence_length > 1, "sequence_length must be >= 2 for causal LM"
+            windows = {"input_ids": [], "attention_mask": []}
 
             for i in range(0, len(input_ids), sequence_length):
                 ids = input_ids[i : i + sequence_length]
@@ -108,18 +115,18 @@ class NN_Trainer:
                     ids = ids + [pad_token_id] * pad_len
                     mask = mask + [0] * pad_len
 
-                blocks["input_ids"].append(ids)
-                blocks["attention_mask"].append(mask)
-            return blocks
+                windows["input_ids"].append(ids)
+                windows["attention_mask"].append(mask)
+            return windows
         
         if shuffle_dataset:
             dataset = dataset.shuffle(seed=epoch)
         dataset = _concatenate_input_ids_and_attention_mask(dataset)
         if self.config.OVERLAPPING_SEQUENCES:
-            sequences = _create_overlapping_sequences(dataset["input_ids"], dataset["attention_mask"], self.config.SEQUENCE_LENGTH, self.model_manager.tokenizer.pad_token_id, self.config.OVERLAPPING_STRIDE)
+            windows = _create_sliding_windows(dataset["input_ids"], dataset["attention_mask"], self.config.SEQUENCE_LENGTH, self.model_manager.tokenizer.pad_token_id)
         else:
-            sequences = _create_nonoverlapping_sequences(dataset["input_ids"], dataset["attention_mask"], self.config.SEQUENCE_LENGTH, self.model_manager.tokenizer.pad_token_id)
-        dataset = Dataset.from_dict(sequences)
+            windows = _create_nonoverlapping_windows(dataset["input_ids"], dataset["attention_mask"], self.config.SEQUENCE_LENGTH, self.model_manager.tokenizer.pad_token_id)
+        dataset = Dataset.from_dict(windows)
         dataloader = DataLoader(dataset, batch_size=self.config.BATCH_SIZE, 
                                 shuffle=shuffle_dataloader, collate_fn=collator,
                                 pin_memory=self.config.PIN_MEMORY, drop_last=self.config.DROP_LAST)
@@ -128,10 +135,10 @@ class NN_Trainer:
     def train_language_model(self, compute_metrics=None):
         # create legacy train flag
         legacy_train = self.config.SEQUENCE_LENGTH == 2
-        print(f"‼️ Detected sequence length equals to 2, using legacy train mode")
+        print(f"Detected sequence length equals to 2, using legacy train mode")
 
         for run in range(self.config.NUM_RUNS):
-            best_acc = float("-inf") # for best model selection
+            best_acc = float("-inf") 
             # load model and tokenizer
             self.load_lanaguge_model_and_tokenizer()
 
@@ -155,16 +162,21 @@ class NN_Trainer:
             else:
                 log_file = None
             
+            # if not shuffling dataset, create train dataloader here
+            if not self.config.SHUFFLE_DATASET:
+                train_loader = self.create_dataloader(train_dataset, False, self.config.SHUFFLE_DATALOADER, collator)
+            # create eval dataloader no matter what 
+            eval_loader = self.create_dataloader(eval_dataset, False, False, collator) if eval_dataset is not None else None
+
             # training loop
             loop = tqdm(range(self.config.NUM_EPOCHS), leave=True, desc=f"Epoch", ncols=100)
             for epoch in loop:
-                # create dataloader
-                train_loader = self.create_dataloader(train_dataset, self.config.SHUFFLE_DATASET, self.config.SHUFFLE_DATALOADER, collator, epoch)
-                eval_loader = self.create_dataloader(eval_dataset, False, False, collator, epoch) if eval_dataset is not None else None
+                if self.config.SHUFFLE_DATASET:
+                    train_loader = self.create_dataloader(train_dataset, True, self.config.SHUFFLE_DATALOADER, collator, epoch)
 
                 # show examples of train dataset
                 if epoch == 0:
-                    print(f"📝 showing examples of train dataset")
+                    print(f"showing examples of train dataset")
                     for i, batch in enumerate(train_loader):
                         if i < 3:
                             print
@@ -184,7 +196,6 @@ class NN_Trainer:
                         state = {}
                     model.train()
                     running_loss = 0
-                    # loop = tqdm(train_loader, leave=True, desc=f"Epoch {epoch+1}/{self.config.NUM_EPOCHS}", ncols=100)
                     for i, batch in enumerate(train_loader):
                         optimizer.zero_grad()
                         if legacy_train:
@@ -206,12 +217,14 @@ class NN_Trainer:
                     return {"loss": f"{running_loss / (i + 1):.4f}",
                             "lr": f"{optimizer.param_groups[0]['lr']:.6f}"}
 
-                _train_epoch(self.model_manager.model, train_loader, optimizer)
+                train_info = _train_epoch(self.model_manager.model, train_loader, optimizer)
                 if scheduler is not None and self.config.LEARNING_RATE_SCHEDULER in ["step", "exponential"]:
                     scheduler.step()
 
+                loop.set_postfix(train_info)
+
                 def _eval_epoch(model, eval_loader, compute_metrics, eval_dataset, epoch):
-                    print(f"\n 📝 evaluating model...")
+                    print(f"\n evaluating model...")
                     all_labels = []
                     all_preds = []
                     all_logits = []
@@ -256,12 +269,12 @@ class NN_Trainer:
                             metric_for_best = metric_info['accuracy'][self.config.METRIC_FOR_BEST_MODEL]
                         else:
                             metric_for_best = None
-                        print(f"📝 evaluation metrics: ")
+                        print(f"evaluation metrics: ")
                         pprint(metric_info['accuracy'], compact=True)
                         for key, value in metric_info.items():
                             for k, v in value.items():
-                                value[k] = _to_serializable(v)
-                            record[key] = _to_serializable(value)
+                                value[k] = to_serializable(v)
+                            record[key] = to_serializable(value)
                     if log_file is not None:
                         with open(log_file, "a") as f:
                             f.write(json.dumps(record) + "\n")
@@ -272,7 +285,7 @@ class NN_Trainer:
                         metric_for_best = _eval_epoch(self.model_manager.model, eval_loader, compute_metrics, eval_dataset, epoch)
                         is_best = False
                         if metric_for_best is not None and (metric_for_best > best_acc):
-                            print(f"✅ New best metric: {metric_for_best}")
+                            print(f"New best metric: {metric_for_best}")
                             best_acc = metric_for_best
                             is_best = True
                         ckpt_dir = save_checkpoint(run_dir, self.model_manager.model, 
@@ -287,15 +300,15 @@ class NN_Trainer:
             if self.config.LOAD_BEST_MODEL_AT_END:
                 best_ckpt = os.path.join(run_dir, "checkpoints", "best")
                 _ = load_checkpoint(best_ckpt, model=self.model_manager.model, map_location="auto", strict=True, load_rng=False)
-                print(f"✅ Loaded best model from: {best_ckpt}")
+                print(f"Loaded best model from: {best_ckpt}")
 
             if self.config.SAVE_MODEL:
                 if self.config.LOAD_BEST_MODEL_AT_END:
-                    print(f"saving best model to: {os.path.join(run_dir, 'export')}")
+                    print(f"Saving best model to: {os.path.join(run_dir, 'export')}")
                 else:
-                    print(f"saving last model to: {os.path.join(run_dir, 'export')}")
+                    print(f"Saving last model to: {os.path.join(run_dir, 'export')}")
                 save_dir = os.path.join(run_dir, "export")
-                _clean_dir(save_dir)
+                clean_dir(save_dir)
                 save_pretrained(self.model_manager.model, save_dir)
                 self.model_manager.tokenizer.save_pretrained(save_dir)
-                print(f"✅ model saved!")
+                print(f"model saved!")

@@ -27,7 +27,6 @@ from torch.utils.data import DataLoader
 from ..models import ModelManager
 from transformers import TextIteratorStreamer
 from ..config import EvaluationConfig
-from ..data import validate_format, load_jsonl, find_file, load_json
 
 class Evaluator:
     def __init__(self, config: EvaluationConfig):
@@ -95,18 +94,12 @@ class Evaluator:
                 for root, dirs, files in os.walk(item):
                     for dir in dirs:
                         if "processed" in dir:
-                            meta = find_file(root, "meta.json")
-                            if meta:
-                                meta = load_json(meta)
-                                data_type = meta["type"]
-                            else:
-                                data_type = "chat"
                             processed_path = Path(root) / dir
                             test_json: Optional[str] = None
                             for j in processed_path.glob("test*.json*"):
                                 test_json = str(j)
                                 break
-                            out[item.name+"_"+data_type] = test_json
+                            out[item.name] = test_json
         return dict(sorted(out.items()))
 
     def select_datasets(self, dataset_names: Union[List[str], str]) -> List[str]:
@@ -122,11 +115,6 @@ class Evaluator:
 
         return selected_datasets
 
-    def load_test_data(self, dataset_name: str, data_path: str) -> List[Any]:
-        data_type = dataset_name.split("_")[-1]
-        data = load_dataset("json", data_files=data_path, split="train")
-        return data, data_type
-
     def format_chat(self, examples: Any, reasoning_effort: Optional[str] = None) -> str:
         convos = examples["messages"]
         labels = []
@@ -135,7 +123,6 @@ class Evaluator:
             last_ass = next((m for m in reversed(conv) if m["role"] == "assistant"), None)
             label = last_ass["content"] if last_ass else ""
 
-            # drop only the final assistant turn; keep history
             if conv and conv[-1]["role"] == "assistant":
                 conv = conv[:-1]
             texts.append(self.model_manager.tokenizer.apply_chat_template(conv, tokenize = False,
@@ -429,6 +416,7 @@ class Evaluator:
         self,
         model_name: str,
         dataset_names: Union[List[str], str],
+        data_type: str,
         labels_map: Dict[str, Any],
         reasoning: bool,
         max_samples: Optional[int] = None,
@@ -453,7 +441,7 @@ class Evaluator:
         self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
 
         for dataset_name, data_path in selected_datasets.items():
-            test_data, data_type = self.load_test_data(dataset_name, data_path)
+            test_data = load_dataset("json", data_files=data_path, split="train")
             results[dataset_name] = {}
             if max_samples:
                 test_data = test_data.select(range(max_samples))
@@ -493,6 +481,7 @@ class Evaluator:
     def compare_text(
         self,
         dataset_name: str,
+        data_type: str,
         model_names: Union[List[str], str],
         reasoning_map: Dict[str, bool],
         labels: List[str],
@@ -506,7 +495,7 @@ class Evaluator:
         selected_models = self.select_models(model_names)
         selected_dataset = self.select_datasets(dataset_name)
 
-        test_data, data_type = self.load_test_data(dataset_name, selected_dataset[dataset_name])
+        test_data = load_dataset("json", data_files=selected_dataset[dataset_name], split="train")
         generate_args = generate_args or self.config.GENERATE_ARGS
 
         results = {}
@@ -661,6 +650,7 @@ class Evaluator:
                     dataset_names = list(datasets.keys())
                 else:
                     dataset_names = [d.strip() for d in dataset_names.split(",")]
+                data_type = input("Please enter the data type(chat or instruction): ").strip()
                 labels_map = {}
                 for dataset_name in dataset_names:
                     while True:
@@ -676,10 +666,13 @@ class Evaluator:
                 max_samples = int(max_samples) if max_samples else None
 
                 generate_args = _get_generate_args()
-                print(f"😎 Evaluating the model {model_name} on the datasets {dataset_names}...")
+                print(f"Evaluating the model {model_name} on the datasets {dataset_names}...")
 
-                self.benchmark_text(model_name, dataset_names, 
-                                    labels_map, reasoning, 
+                self.benchmark_text(model_name, 
+                                    dataset_names, 
+                                    data_type,
+                                    labels_map, 
+                                    reasoning, 
                                     max_samples=max_samples, 
                                     max_seq_length=max_seq_length, 
                                     load_in_4bit=load_in_4bit, 
@@ -707,6 +700,7 @@ class Evaluator:
                         "dtype": dtype,
                     }
                 dataset_name = input("Please enter the dataset name: ").strip()
+                data_type = input("Please enter the data type(chat or instruction): ").strip()
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
 
@@ -720,7 +714,7 @@ class Evaluator:
 
                 generate_args = _get_generate_args()
                 print(f"😎 Comparing the models {model_names} on the dataset {dataset_name}...")
-                self.compare_text(dataset_name, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
+                self.compare_text(dataset_name, data_type, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
                 continue
 
             print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | help | quit")
