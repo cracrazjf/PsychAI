@@ -4,6 +4,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import BPE, WordPiece, Unigram, WordLevel
 from tokenizers.trainers import BpeTrainer, UnigramTrainer, WordLevelTrainer, WordPieceTrainer
 from tokenizers import AddedToken
+from tokenizers import decoders
 from transformers import PreTrainedTokenizerFast
 import ftfy
 import re
@@ -167,9 +168,9 @@ def make_normalizer(
     strip: bool = True,
     strip_left: bool = True,
     strip_right: bool = True,
-    replaces: list[tuple[str, str]] | None = None,  # [(pattern, content), ...]
-    bert_handle_chinese_chars: bool = True,         # only if preset="bert"
-    bert_clean_text: bool = True                    # only if preset="bert"
+    replaces: list[tuple[str, str]] | None = None,
+    bert_handle_chinese_chars: bool = True,
+    bert_clean_text: bool = True 
 ):
     steps = []
 
@@ -257,7 +258,7 @@ def make_pretokenizer(
     if use_metaspace:
         steps.append(pre.Metaspace(
             replacement=metaspace_replacement,
-            add_prefix_space=metaspace_add_prefix_space
+            # add_prefix_space=metaspace_add_prefix_space
         ))
     if split_digits:
         steps.append(pre.Digits(individual_digits=True))
@@ -273,7 +274,6 @@ def make_pretokenizer(
         steps.append(pre.Split(r"#\w+", behavior="isolated", regex=True))
     if split_emojis:
         steps.append(pre.Split(r"[\U0001F600-\U0001F64F]", behavior="isolated", regex=True))  
-        # 😀–🙏 range as an example; can be extended
     if split_num_units:
         steps.append(pre.Split(r"(\d+)([a-zA-Z]+)", behavior="isolated", regex=True))
 
@@ -298,6 +298,8 @@ def train_tokenizer(
     min_frequency: int = 2,
     normalizer: Optional[norm.Normalizer] = None,
     pretokenizer: Optional[pre.PreTokenizer] = None,
+    decoder_type: str = "metaspace",
+    decoder_kwargs: dict = {},
     special_tokens: list[str] = ["<unk>", "<pad>", "<bos>", "<eos>"],
     protected_terms: list[str] = []
 ):
@@ -345,6 +347,17 @@ def train_tokenizer(
     tok.add_tokens(added)  # adds them as regular (non-special) tokens
 
     tok.train(files, trainer)
+
+    if decoder_type == "metaspace":
+        replacement = decoder_kwargs.get("replacement", "▁")
+        tok.decoder = decoders.Metaspace(replacement=replacement)
+    elif decoder_type == "bytes":
+        tok.decoder = decoders.Bytes()
+    elif decoder_type == "wordpiece":
+        prefix = decoder_kwargs.get("prefix", "##")
+        tok.decoder = decoders.WordPiece(prefix=prefix)
+    else:
+        raise ValueError(f"Unknown decoder_type: {decoder_type}")
 
     return tok
 

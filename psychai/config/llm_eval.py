@@ -18,16 +18,6 @@ class LLM_EvalConfig:
         "top_k": 50,
         "reasoning_effort": None
     }
-    PROMPT_TEMPLATE = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
-            
-            ### Instruction:
-            {}
-            
-            ### Input:
-            {}
-            
-            ### Response:
-            {}"""
     BATCH_SIZE = 16
     OUTPUT_DIR = "results"
     SAVE_SUMMARY = True

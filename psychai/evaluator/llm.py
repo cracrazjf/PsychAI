@@ -4,14 +4,14 @@ import os
 import json
 import ast
 import re
+import queue
 from tqdm import tqdm
 import pandas as pd
 import threading
 from pathlib import Path
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Union
-
-import numpy as np
+from transformers import LogitsProcessor, LogitsProcessorList
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
@@ -24,18 +24,18 @@ except Exception:  # pragma: no cover - allow usage without sklearn
 
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from ..models import ModelManager
+from ..model_manager.llm import LLM_ModelManager
 from transformers import TextIteratorStreamer
 from ..config import EvaluationConfig
 
 class Evaluator:
     def __init__(self, config: EvaluationConfig):
         self.config = config
+        self.use_unsloth = config.USE_UNSLOTH
         self.models_root = config.MODELS_ROOT
         self.model_cache_root = config.MODEL_CACHE_ROOT
         self.data_root = config.DATA_ROOT
-        self.use_unsloth = config.USE_UNSLOTH
-        self.model_manager = ModelManager()
+        self.model_manager = LLM_ModelManager()
 
     # list available models in models_root and model_cache_root
     def list_available_models(self) -> Dict[str, str]:
@@ -65,23 +65,17 @@ class Evaluator:
                             out[model_name] = model_name
         return dict(sorted(out.items()))
 
-    def select_models(self, model_names: Union[List[str], str]) -> List[str]:
-        models_dict = self.list_available_models()
-        selected_models = {}
-
-        if model_names == "all":
-            model_list = list(models_dict.keys())
-            selected_models = models_dict
-        else:
-            model_list = model_names if isinstance(model_names, list) else [model_names]
-            selected_models = {model_name: models_dict[model_name] for model_name in model_list}
-
-        return selected_models
-
     def load_model_and_tokenizer(self, model_name: str, model_path: str, reasoning: bool, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
-        self.model_manager.load_model(model_name, model_path, reasoning, self.use_unsloth, for_training=False, max_seq_length=max_seq_length, load_in_4bit=load_in_4bit, full_finetuning=False, dtype=dtype)
+        self.model_manager.load_model(model_name, 
+                                      model_path, 
+                                      reasoning, 
+                                      self.use_unsloth, 
+                                      for_training=False, 
+                                      max_seq_length=max_seq_length, 
+                                      load_in_4bit=load_in_4bit, 
+                                      full_finetuning=False, 
+                                      dtype=dtype)
         self.device = next(self.model_manager.model.parameters()).device
-        return self.model_manager.model, self.model_manager.tokenizer
 
     # list available datasets in data_root
     def list_available_datasets(self) -> Dict[str, Any]:
@@ -102,20 +96,7 @@ class Evaluator:
                             out[item.name] = test_json
         return dict(sorted(out.items()))
 
-    def select_datasets(self, dataset_names: Union[List[str], str]) -> List[str]:
-        datasets_dict = self.list_available_datasets()
-        selected_datasets = {}
-
-        if dataset_names == "all":
-            dataset_list = list(datasets_dict.keys())
-            selected_datasets = datasets_dict
-        else:
-            dataset_list = dataset_names if isinstance(dataset_names, list) else [dataset_names]
-            selected_datasets = {dataset_name: datasets_dict[dataset_name] for dataset_name in dataset_list}
-
-        return selected_datasets
-
-    def format_chat(self, examples: Any, reasoning_effort: Optional[str] = None) -> str:
+    def format_chat(self, examples: Any, reasoning_effort: Optional[str] = None) -> dict:
         convos = examples["messages"]
         labels = []
         texts = []
@@ -125,18 +106,34 @@ class Evaluator:
 
             if conv and conv[-1]["role"] == "assistant":
                 conv = conv[:-1]
-            texts.append(self.model_manager.tokenizer.apply_chat_template(conv, tokenize = False,
-                                                                add_generation_prompt=True,
-                                                                reasoning_effort=reasoning_effort))
+            
+            kwargs = {
+                "tokenize": False,
+                "add_generation_prompt": True
+            }
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            texts.append(self.model_manager.tokenizer.apply_chat_template(conv, **kwargs))
             labels.append(label)
 
         return {"text": texts, "label": labels}
 
-    def format_instruction(self, examples: Any, prompt_template: str) -> str:
+    def format_instruction(self, examples: Any, prompt_template: Optional[str] = None) -> dict:
         texts = []
         labels = []
+        if prompt_template is None:
+            prompt_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
+            
+            ### Instruction:
+            {}
+            
+            ### Input:
+            {}
+            
+            ### Response:
+            {}"""
         for example in examples:
-            text = prompt_template.format(example["instruction"], example["input"], "")
+            text = prompt_template.format(example["instruction"], example.get("input", ""), "")
             texts.append(text)
             labels.append(example["output"])
 
@@ -148,9 +145,26 @@ class Evaluator:
             final_re = r"<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)<\|return\|>"
         return analysis_re, final_re
     
+    class CaptureLogits(LogitsProcessor):
+            def __init__(self, out_queue: queue.Queue, top_k: int = 50):
+                self.out_queue = out_queue
+                self.top_k = top_k
+                self.step = 0
+
+            def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
+                topk_vals, topk_ids = torch.topk(scores, k=min(self.top_k, scores.size(-1)), dim=-1)
+                payload = {
+                    "step": self.step,
+                    "topk_ids": topk_ids[0].detach().cpu().tolist(),
+                    "topk_vals": topk_vals[0].detach().cpu().tolist(),
+                }
+                self.out_queue.put(payload)
+                self.step += 1
+                return scores
+
     def chat(self, 
-                messages: List[Dict[str, str]], 
-                generate_args: Optional[Dict[str, Any]] = None) -> str:
+             messages: List[Dict[str, str]], 
+             generate_args: Dict[str, Any]):
         
         max_new_tokens = generate_args.get("max_new_tokens", 128)
         temperature = generate_args.get("temperature", 0.7)
@@ -159,12 +173,18 @@ class Evaluator:
         top_k = generate_args.get("top_k", 50)
         reasoning_effort = generate_args.get("reasoning_effort", 'low')
         
-        formatted_inputs = self.model_manager.tokenizer.apply_chat_template(messages, 
-                                                            add_generation_prompt=True, 
-                                                            return_tensors = "pt",
-                                                            return_dict = True,
-                                                            reasoning_effort=reasoning_effort).to(self.device)
+        kwargs = {
+            "add_generation_prompt": True,
+            "return_tensors": "pt",
+            "return_dict": True
+        }
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+        
+        formatted_inputs = self.model_manager.tokenizer.apply_chat_template(messages, **kwargs)
+        formatted_inputs = formatted_inputs.to(self.device)
         streamer = TextIteratorStreamer(self.model_manager.tokenizer, skip_prompt=True, skip_special_tokens=not self.model_manager.reasoning)
+
         def generate_response():
             with torch.no_grad():
                 self.model_manager.model.generate(
@@ -186,7 +206,7 @@ class Evaluator:
             final_open = final_re.split("(.*?)")[0].replace("\\", "")
             final_close = final_re.split("(.*?)")[1].replace("\\", "")
             buf = ""
-            mode = None                # None | "analysis" | "final"
+            mode = None
             printed_thinking_hdr = False
             printed_model_hdr = False
             tail_keep = max(len(analysis_open), len(analysis_close),
@@ -215,7 +235,6 @@ class Evaluator:
                         ai = buf.find(analysis_open)
                         fi = buf.find(final_open)
                         if ai == fi == -1:
-                            # keep a tiny tail so split markers across chunks are detected
                             if len(buf) > tail_keep:
                                 buf = buf[-tail_keep:]
                             break
@@ -228,7 +247,6 @@ class Evaluator:
                     elif mode == "analysis":
                         ci = buf.find(analysis_close)
                         if ci == -1:
-                            # stream most of buf as thinking; keep a tail for boundary
                             if len(buf) > tail_keep:
                                 write_thinking(buf[:-tail_keep])
                                 buf = buf[-tail_keep:]
@@ -237,7 +255,7 @@ class Evaluator:
                             write_thinking(buf[:ci])
                             buf = buf[ci + len(analysis_close):]
                             mode = None
-                    else:  # mode == "final"
+                    else:
                         ci = buf.find(final_close)
                         if ci == -1:
                             if len(buf) > tail_keep:
@@ -246,9 +264,8 @@ class Evaluator:
                             break
                         else:
                             write_model(buf[:ci])
-                            return  # finished cleanly
+                            return
 
-            # End of stream fallbacks
             if mode == "analysis" and buf:
                 write_thinking(buf)
             elif mode == "final" and buf:
@@ -266,30 +283,19 @@ class Evaluator:
         thread.join()
         print()
 
-    def evaluate_outputs(self, 
-                    data_type: str,
-                    data: Any, 
-                    labels_list: List[str],
-                    generate_args: Optional[Dict[str, Any]] = None) -> str:
-        batch_size = self.config.BATCH_SIZE
+    def evaluate_outputs(self,
+                         data: Any,  
+                         data_type: str,
+                         batch_size: int,
+                         prompt_template: Optional[str] = None,
+                         labels_list: List[str] = None,
+                         generate_args: Optional[Dict[str, Any]] = None) -> str:
         max_new_tokens = generate_args.get("max_new_tokens", 128)
         temperature = generate_args.get("temperature", 0.7)
         do_sample = generate_args.get("do_sample", True)
         top_p = generate_args.get("top_p", 0.95)
         top_k = generate_args.get("top_k", 50)
         reasoning_effort = generate_args.get("reasoning_effort", 'low')
-        prompt_template = self.config.PROMPT_TEMPLATE
-        if prompt_template is None:
-            prompt_template = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
-            
-            ### Instruction:
-            {}
-            
-            ### Input:
-            {}
-            
-            ### Response:
-            {}"""
         
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
@@ -297,29 +303,31 @@ class Evaluator:
             data = data.map(partial(self.format_instruction, prompt_template=prompt_template), batched=True)
         else:
             raise ValueError(f"Invalid data type: {data_type}")
-        data.set_format(type=None)
+        # data.set_format(type=None)
 
         def collate_for_generate(batch):
-            prompts = [ex["text"] for ex in batch]           # or "prompt" if that’s your field
+            prompts = [ex["text"] for ex in batch]
             enc = self.model_manager.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
-            enc["label"] = [ex["label"] for ex in batch]  # keep labels as a list of strings
+            enc["labels"] = [ex["label"] for ex in batch]
             return enc
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
-        
+        self.model_manager.model.eval()
+
         pred_texts = []
         gold_texts = []
         think_texts = []
         tqdm_loader = tqdm(loader, desc="Evaluating")
         for batch in tqdm_loader:
-            labels = batch.pop("label")    
+            labels = batch.pop("labels")    
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            outputs = self.model_manager.model.generate(**batch, 
-                                                        max_new_tokens = max_new_tokens, 
-                                                        use_cache = True,
-                                                        temperature = temperature,
-                                                        do_sample = do_sample,
-                                                        top_p = top_p,
-                                                        top_k = top_k)
+            with torch.no_grad():
+                outputs = self.model_manager.model.generate(**batch, 
+                                                            max_new_tokens = max_new_tokens, 
+                                                            use_cache = True,
+                                                            temperature = temperature,
+                                                            do_sample = do_sample,
+                                                            top_p = top_p,
+                                                            top_k = top_k)
             gold_texts.extend(labels)
         
             if data_type == "instruction":
@@ -333,8 +341,10 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_outputs = []
                 for i in range(outputs.size(0)):
-                    input_len = batch["input_ids"][i].shape[0]
-                    sliced_output = outputs[i, input_len:]
+                    # input_len = batch["input_ids"][i].shape[0]
+                    attn = batch["attention_mask"]  # [B, T_in]
+                    prompt_lens = attn.sum(dim=1) 
+                    sliced_output = outputs[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
                 
                 if self.model_manager.reasoning:
