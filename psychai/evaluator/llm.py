@@ -65,8 +65,8 @@ class Evaluator:
     def load_model_and_tokenizer(self, model_name: str, model_path: str, reasoning: bool, max_seq_length: int, load_in_4bit: bool, dtype: str) -> Tuple[Any, Any]:
         self.model_manager.load_model(model_name, 
                                       model_path, 
-                                      reasoning, 
-                                      self.use_unsloth, 
+                                      reasoning=reasoning, 
+                                      use_unsloth=self.use_unsloth, 
                                       for_training=False, 
                                       max_seq_length=max_seq_length, 
                                       load_in_4bit=load_in_4bit, 
@@ -643,10 +643,7 @@ class Evaluator:
                 model_path = models.get(model_name, model_name)
                 self.load_model_and_tokenizer(model_name,
                                               model_path,
-                                              reasoning=reasoning,
-                                              use_unsloth=self.use_unsloth,
-                                              for_training=False,
-                                              full_finetuning=False,
+                                              reasoning,
                                               max_seq_length=model_args["max_seq_length"],
                                               load_in_4bit=model_args["load_in_4bit"],
                                               dtype=model_args["dtype"])
