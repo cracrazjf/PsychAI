@@ -10,26 +10,23 @@ import pandas as pd
 import threading
 from pathlib import Path
 from functools import partial
+from ..model_manager.llm import LLM_ModelManager
 from typing import Any, Dict, List, Optional, Tuple, Union
 from transformers import LogitsProcessor, LogitsProcessorList
 import torch
 from torch.nn.utils.rnn import pad_sequence
-
 try:
     from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 except Exception:  # pragma: no cover - allow usage without sklearn
     accuracy_score = None
     classification_report = None
     confusion_matrix = None
-
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from ..model_manager.llm import LLM_ModelManager
 from transformers import TextIteratorStreamer
-from ..config import EvaluationConfig
 
 class Evaluator:
-    def __init__(self, config: EvaluationConfig):
+    def __init__(self, config):
         self.config = config
         self.use_unsloth = config.USE_UNSLOTH
         self.models_root = config.MODELS_ROOT
