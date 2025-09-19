@@ -552,34 +552,43 @@ class Evaluator:
         models = self.list_available_models()
         datasets = self.list_available_datasets()
 
-        def _get_generate_args():
+        def _get_generate_args(is_reasoning: bool):
             default_generate_args = self.config.GENERATE_ARGS
+            
+            prompts = {
+                "max_new_tokens": (int, "Enter the maximum number of new tokens (empty for default): "),
+                "temperature": (float, "Enter temperature (empty for default): "),
+                "do_sample": (lambda x: x.lower() in ["true", "1", "yes"], "Enter whether to sample tokens [True/False] (empty for default): "),
+                "top_p": (float, "Enter top_p (empty for default): "),
+                "top_k": (int, "Enter top_k (empty for default): "),
+            }
+            if is_reasoning:
+                prompts["reasoning_effort"] = (str, "Enter reasoning_effort [low/medium/high] (empty for default): ")
+
             generate_args = {}
-            generate_args["max_new_tokens"] = input("Enter max_new_tokens(empty for default): ").strip() or default_generate_args["max_new_tokens"]
-            generate_args["temperature"] = input("Enter temperature(empty for default): ").strip() or default_generate_args["temperature"]
-            generate_args["do_sample"] = input("Enter do_sample(empty for default): ").strip() or default_generate_args["do_sample"]
-            generate_args["top_p"] = input("Enter top_p(empty for default): ").strip() or default_generate_args["top_p"]
-            generate_args["top_k"] = input("Enter top_k(empty for default): ").strip() or default_generate_args["top_k"]
-            generate_args["reasoning_effort"] = input("Enter reasoning_effort(empty for default): ").strip() or default_generate_args["reasoning_effort"]
-            print(f"🔍 This model will use the following generate args: ")
-            print(f"max_new_tokens: {generate_args['max_new_tokens']}")
-            print(f"temperature: {generate_args['temperature']}")
-            print(f"do_sample: {generate_args['do_sample']}")
-            print(f"top_p: {generate_args['top_p']}")
-            print(f"top_k: {generate_args['top_k']}")
-            print(f"reasoning_effort: {generate_args['reasoning_effort']}")
+            for key, (cast, message) in prompts.items():
+                raw = input(message).strip()
+                if raw == "":
+                    generate_args[key] = default_generate_args[key]
+                else:
+                    try:
+                        generate_args[key] = cast(raw)
+                    except ValueError:
+                        print(f"⚠️ Invalid input for {key}, using default.")
+                        generate_args[key] = default_generate_args[key]
+
+            print("\n🔍 This model will use the following generate args:")
+            for k, v in generate_args.items():
+                print(f"{k}: {v}")
+
             return generate_args
 
-        if not models:
-            print(f"⚠️ No local models found under {self.models_root} or {self.model_cache_root}. You can still load HF refs by name via 'switch <ref>'.")
-
-        print("\n🎮 Welcome to PSYCHAI Interactive Text Evaluation")
-        print("You can load/switch between models by using 'switch <model_name>'.")
+        print("\n Welcome to PSYCHAI Interactive LLM Evaluator")
         print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
 
         while True:
             try:
-                user = input("\n🤩 Hello, Welcome to PSYCHAI, please enter your command: ").strip()
+                user = input("\n PSYCHAI: What would you like to do? ").strip()
             except KeyboardInterrupt:
                 print("\n👋 Bye! See you next time!")
                 break
@@ -589,53 +598,81 @@ class Evaluator:
                 break
 
             if user == "help":
-                print("💡 Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
+                print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
                 continue
 
             if user == "models":
-                print("🔍 Here are the available models from your local machine:")
+                print(f"Here are the available local models :")
                 print("\n".join(models.keys()) or "(none)")
                 continue
 
             if user == "datasets":
-                print("🔍 Here are the available datasets from your local machine:")
+                print(f"Here are the available datasets :")
                 print("\n".join(datasets.keys()) or "(none)")
                 continue
 
             if user.startswith("switch "):
-                reasoning = input("Is the model reasoning? (y/n): ").strip()
-                reasoning = reasoning.lower() == "y"
-                max_seq_length = input("Enter max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
-                load_in_4bit = input("Enter load_in_4bit(empty for default): ").strip() or self.config.LOAD_IN_4BIT
-                dtype = input("Enter dtype(empty for default): ").strip() or self.config.DTYPE
+                while True:
+                    reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
+                    if reasoning_in in ("y", "yes"):
+                        reasoning = True
+                        break
+                    elif reasoning_in in ("n", "no"):
+                        reasoning = False
+                        break
+                    else:
+                        print("⚠️ Please enter 'y' or 'n'.")
+                prompts = {
+                        "max_seq_length": (int, "Enter max_seq_length (empty for default): ", 2048),
+                        "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Enter load_in_4bit [True/False] (empty for default): ", True),
+                        "dtype": (str, "Enter dtype (empty for default): ", None),
+                    }
+                model_args = {}
+                for key, (cast, message, default) in prompts.items():
+                    raw = input(message).strip()
+                    if raw == "":
+                        model_args[key] = default
+                    else:
+                        try:
+                            model_args[key] = cast(raw)
+                        except ValueError:
+                            print(f"⚠️ Invalid input for {key}, using default.")
+                            model_args[key] = default
+
                 model_name = user.split(" ", 1)[1].strip()
                 model_path = models.get(model_name, model_name)
-                self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
-                print(f"🔄 Switched to: {model_name}")
-                print(f"🔍 This model is reasoning: {reasoning}")
-                print(f"🔍 This model's max_seq_length is: {max_seq_length}")
-                print(f"🔍 This model's load_in_4bit is: {load_in_4bit}")
-                print(f"🔍 This model's dtype is: {dtype}")
+                self.load_model_and_tokenizer(model_name,
+                                              model_path,
+                                              reasoning,
+                                              model_args["max_seq_length"],
+                                              model_args["load_in_4bit"],
+                                              model_args["dtype"])
+                
+                print(f"Switched to: {model_name}")
+                print(f"This model is reasoning: {reasoning}")
+                print(f"This model's max_seq_length is: {model_args['max_seq_length']}")
+                print(f"This model is loaded in 4bit: {model_args['load_in_4bit']}")
+                print(f"This model's dtype is: {model_args['dtype']}")
                 continue
 
             if user == "chat":
                 if self.model_manager.model is None:
                     print("⚠️ Load a model first (use 'switch').")
                     continue
-                print(f"💬 Chatting with {self.model_manager.model_name}")
-                print("Type 'exit' to leave chat.")
-                generate_args = _get_generate_args()
-                system_prompt = input("System prompt(optional): ").strip()
-                if system_prompt:
-                    messages = [{"role": "system", "content": system_prompt}]
-                else:
-                    messages = []
+                print(f"Chatting with {self.model_manager.model_name}...")
+                print("Type 'exit' to leave chat anytime.")
+
+                generate_args = _get_generate_args(self.model_manager.reasoning)
+
+                system_prompt = input("Enter system prompt (optional): ").strip()
+                messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+
                 while True:
                     try:
-                        msg = input("\n👤 You: ").strip()
+                        msg = input("\n You: ").strip()
                         messages.append({"role": "user", "content": msg})
-                    except KeyboardInterrupt:
-                        print("\n👋 Bye")
+                    except (KeyboardInterrupt, EOFError):
+                        print("\n👋 Bye, See you next time!")
                         break
                     if msg.lower() in ("exit", "quit", "q"):
                         break
