@@ -588,7 +588,7 @@ class Evaluator:
 
         while True:
             try:
-                user = input("\n PSYCHAI: What would you like to do? ").strip()
+                user = input("\nPSYCHAI: What would you like to do? ").strip()
             except KeyboardInterrupt:
                 print("\n👋 Bye! See you next time!")
                 break
@@ -643,10 +643,13 @@ class Evaluator:
                 model_path = models.get(model_name, model_name)
                 self.load_model_and_tokenizer(model_name,
                                               model_path,
-                                              reasoning,
-                                              model_args["max_seq_length"],
-                                              model_args["load_in_4bit"],
-                                              model_args["dtype"])
+                                              reasoning=reasoning,
+                                              use_unsloth=self.use_unsloth,
+                                              for_training=False,
+                                              full_finetuning=False,
+                                              max_seq_length=model_args["max_seq_length"],
+                                              load_in_4bit=model_args["load_in_4bit"],
+                                              dtype=model_args["dtype"])
                 
                 print(f"Switched to: {model_name}")
                 print(f"This model is reasoning: {reasoning}")
