@@ -259,7 +259,6 @@ class Evaluator:
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
         pad_id = self.model_manager.tokenizer.pad_token_id
-        vocab_size = self.model_manager.tokenizer.vocab_size
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -306,110 +305,110 @@ class Evaluator:
                                                         return_dict_in_generate=True,
                                                         output_scores=True)
             
-            # get corresponding scores and tokens
-            sequences = outputs.sequences
-            scores = torch.stack(outputs.scores, dim=1)
-            topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
+        #     # get corresponding scores and tokens
+        #     sequences = outputs.sequences
+        #     scores = torch.stack(outputs.scores, dim=1)
+        #     topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
 
-            # decide the input length
-            input_len = batch["input_ids"].size(1)
+        #     # decide the input length
+        #     input_len = batch["input_ids"].size(1)
 
-            if data_type == "instruction":
-                pass
-                # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                # predictions = []
-                # for decoded_output in decoded_outputs:
-                #     head, sep, tail = decoded_output.rpartition("### Response:")
-                #     pred = (tail if sep else decoded_output).strip()
-                #     predictions.append(pred)
-                # pred_texts.extend(predictions)
-            elif data_type == "chat":
-                new_tokens = sequences[:, input_len:]
-                valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
+        #     if data_type == "instruction":
+        #         pass
+        #         # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        #         # predictions = []
+        #         # for decoded_output in decoded_outputs:
+        #         #     head, sep, tail = decoded_output.rpartition("### Response:")
+        #         #     pred = (tail if sep else decoded_output).strip()
+        #         #     predictions.append(pred)
+        #         # pred_texts.extend(predictions)
+        #     elif data_type == "chat":
+        #         new_tokens = sequences[:, input_len:]
+        #         valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
 
-                for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
-                    valid_tokens = new_tokens[mini_batch_idx, :valid_length]
-                    valid_scores = scores[mini_batch_idx, :valid_length, :]
-                    max_valid_length = max(max_valid_length, valid_length)
+        #         for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
+        #             valid_tokens = new_tokens[mini_batch_idx, :valid_length]
+        #             valid_scores = scores[mini_batch_idx, :valid_length, :]
+        #             max_valid_length = max(max_valid_length, valid_length)
 
-                    result = {
-                        "sample_id": sample_id,
-                        "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
-                        "label": labels[mini_batch_idx],
-                        "token_ids": valid_tokens.tolist(),
-                        "chosen_scores": valid_scores.gather(1, torch.tensor(valid_tokens).view(-1, 1)).squeeze(1).tolist(),
-                        "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
-                        "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
-                    }
-                    with open(result_path, "w", encoding="utf-8") as f:
-                        f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        #             result = {
+        #                 "sample_id": sample_id,
+        #                 "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
+        #                 "label": labels[mini_batch_idx],
+        #                 "token_ids": valid_tokens.tolist(),
+        #                 "chosen_scores": valid_scores.gather(1, valid_tokens.view(-1, 1)).squeeze(1).tolist(),
+        #                 "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
+        #                 "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
+        #             }
+        #             with open(result_path, "w", encoding="utf-8") as f:
+        #                 f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    buffer.append({
-                        "sample_id": sample_id, 
-                        "valid_length": valid_length,
-                        "scores": valid_scores.detach().cpu().to(torch.float16),
-                    })
+        #             buffer.append({
+        #                 "sample_id": sample_id, 
+        #                 "valid_length": valid_length,
+        #                 "scores": valid_scores.detach().cpu().to(torch.float16),
+        #             })
 
-                    def _flush_buffer():
-                        print(f"Vocab size: {vocab_size}")
-                        print(f"scores shape: {buffer[0]['scores'].shape}")
-                        shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
-                        for i, row in enumerate(buffer):
-                            shard[i, :row["valid_length"], :] = row["scores"]
-                        shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
-                        np.savez_compressed(shard_path, shard.numpy())
+        #             def _flush_buffer():
+        #                 _,_,vocab_size = buffer[0]["scores"].shape
+        #                 shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
+        #                 for i, row in enumerate(buffer):
+        #                     shard[i, :row["valid_length"], :] = row["scores"]
+        #                 shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
+        #                 np.savez_compressed(shard_path, shard.numpy())
 
-                        with open(manifest_path, "w", encoding="utf-8") as f:
-                            for i, row in enumerate(buffer):
-                                f.write(json.dumps({
-                                    "sample_id": row["sample_id"],
-                                    "shard_path": str(shard_path),
-                                    "valid_length": row["valid_length"],
-                                    "row_idx": i,
-                                }) + "\n")
+        #                 with open(manifest_path, "w", encoding="utf-8") as f:
+        #                     for i, row in enumerate(buffer):
+        #                         f.write(json.dumps({
+        #                             "sample_id": row["sample_id"],
+        #                             "shard_path": str(shard_path),
+        #                             "valid_length": row["valid_length"],
+        #                             "row_idx": i,
+        #                         }) + "\n")
 
-                    if len(buffer) >= 100:
-                        _flush_buffer()
-                        shard_id += 1
-                        buffer = []
+        #             if len(buffer) >= 100:
+        #                 _flush_buffer()
+        #                 shard_id += 1
+        #                 max_valid_length = 0
+        #                 buffer = []
 
-                    sample_id += 1
+        #             sample_id += 1
 
 
-                # if self.model_manager.reasoning:
-                #     pred_text = self.model_manager.tokenizer.batch_decode(
-                #         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-                #         sliced_output_seqs,
-                #         skip_special_tokens=False
-                #     )
-                #     analysis_re, final_re = self.get_analysis_and_final_re()
-                #     pred_text_batch = []
-                #     think_text_batch = []
-                #     for text in pred_text:
-                #         ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
-                #         FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
-                #         analysis_match = ANALYSIS_RE.search(text)
-                #         final_match = FINAL_RE.search(text)
-                #         if analysis_match:
-                #             think_text_batch.append(analysis_match.group(1).strip())
-                #             if final_match:
-                #                 pred_text_batch.append(final_match.group(1).strip())
-                #             else:
-                #                 pred_text_batch.append(text)
-                #         else:
-                #             think_text_batch.append("")
-                #             pred_text_batch.append(text)
+        #         # if self.model_manager.reasoning:
+        #         #     pred_text = self.model_manager.tokenizer.batch_decode(
+        #         #         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+        #         #         sliced_output_seqs,
+        #         #         skip_special_tokens=False
+        #         #     )
+        #         #     analysis_re, final_re = self.get_analysis_and_final_re()
+        #         #     pred_text_batch = []
+        #         #     think_text_batch = []
+        #         #     for text in pred_text:
+        #         #         ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
+        #         #         FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
+        #         #         analysis_match = ANALYSIS_RE.search(text)
+        #         #         final_match = FINAL_RE.search(text)
+        #         #         if analysis_match:
+        #         #             think_text_batch.append(analysis_match.group(1).strip())
+        #         #             if final_match:
+        #         #                 pred_text_batch.append(final_match.group(1).strip())
+        #         #             else:
+        #         #                 pred_text_batch.append(text)
+        #         #         else:
+        #         #             think_text_batch.append("")
+        #         #             pred_text_batch.append(text)
 
-                #     think_texts.extend(think_text_batch)
-                #     pred_texts.extend(pred_text_batch)
-                # else:
-                #     pred_text = self.model_manager.tokenizer.batch_decode(
-                #         new_tokens,
-                #         skip_special_tokens=True
-                #     )
-                #     pred_texts.extend(pred_text)
+        #         #     think_texts.extend(think_text_batch)
+        #         #     pred_texts.extend(pred_text_batch)
+        #         # else:
+        #         #     pred_text = self.model_manager.tokenizer.batch_decode(
+        #         #         new_tokens,
+        #         #         skip_special_tokens=True
+        #         #     )
+        #         #     pred_texts.extend(pred_text)
 
-        _flush_buffer()
+        # _flush_buffer()
 
     def benchmark_text(
         self,
