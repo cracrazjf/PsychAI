@@ -415,6 +415,7 @@ class Evaluator:
         data_map: Dict[str, str],
         data_type: str,
         labels_map: Dict[str, Any],
+        batch_size: int,
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None,
@@ -432,6 +433,7 @@ class Evaluator:
                 data = data.select(range(max_samples))
             res = self.evaluate_outputs(data_type, data, 
                                         labels_list=labels_map[data_name], 
+                                        batch_size=batch_size,
                                         generate_args=generate_args)
             results[data_name] = res
 
@@ -494,6 +496,7 @@ class Evaluator:
             self.load_model_and_tokenizer(model_name, model_path, reasoning_map[model_name], max_seq_length, load_in_4bit, dtype)
             res = self.evaluate_outputs(data_type, test_data, 
                                         labels_list=labels, 
+                                        batch_size=batch_size,
                                         generate_args=generate_args)
             results[model_name] = res
 
@@ -692,6 +695,8 @@ class Evaluator:
 
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
+                batch_size = input("Please enter the batch size of the evaluation: ").strip()
+                batch_size = int(batch_size) if batch_size else 1
 
                 generate_args = _get_generate_args(reasoning)
                 print(f"Will start evaluating {model_name} on {data_names}...")
@@ -703,6 +708,7 @@ class Evaluator:
                                     data_type,
                                     labels_map, 
                                     max_samples=max_samples,
+                                    batch_size=batch_size,
                                     model_args=model_args,
                                     generate_args=generate_args)
                 continue
