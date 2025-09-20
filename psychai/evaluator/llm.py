@@ -34,7 +34,6 @@ class Evaluator:
         self.data_root = config.DATA_ROOT
         self.model_manager = LLM_ModelManager()
 
-    # list available models in models_root and model_cache_root
     def list_available_models(self) -> Dict[str, str]:
         """Return {name: path} for subdirectories under models_root."""
         out: Dict[str, str] = {}
@@ -74,7 +73,6 @@ class Evaluator:
                                       dtype=dtype)
         self.device = next(self.model_manager.model.parameters()).device
 
-    # list available datasets in data_root
     def list_available_datasets(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         base_path = Path(self.data_root)
@@ -279,20 +277,16 @@ class Evaluator:
                          data: Any,  
                          data_type: str,
                          batch_size: int,
+                         generate_args: Dict[str, Any],
                          prompt_template: Optional[str] = None,
-                         labels_list: List[str] = None,
-                         generate_args: Optional[Dict[str, Any]] = None) -> str:
-        max_new_tokens = generate_args.get("max_new_tokens", 128)
-        temperature = generate_args.get("temperature", 0.7)
-        do_sample = generate_args.get("do_sample", True)
-        top_p = generate_args.get("top_p", 0.95)
-        top_k = generate_args.get("top_k", 50)
-        reasoning_effort = generate_args.get("reasoning_effort", 'low')
+                         labels_list: List[str] = None) -> str:
+
+        reasoning_effort = generate_args.get("reasoning_effort", None)
         
         if data_type == "chat":
-            data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
+            data = data.map(partial(self.format_chat, reasoning_effort), batched=True)
         elif data_type == "instruction":
-            data = data.map(partial(self.format_instruction, prompt_template=prompt_template), batched=True)
+            data = data.map(partial(self.format_instruction, prompt_template), batched=True)
         else:
             raise ValueError(f"Invalid data type: {data_type}")
         # data.set_format(type=None)
@@ -302,8 +296,8 @@ class Evaluator:
             enc = self.model_manager.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
             enc["labels"] = [ex["label"] for ex in batch]
             return enc
+
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
-        self.model_manager.model.eval()
 
         pred_texts = []
         gold_texts = []
@@ -312,14 +306,13 @@ class Evaluator:
         for batch in tqdm_loader:
             labels = batch.pop("labels")    
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            with torch.no_grad():
-                outputs = self.model_manager.model.generate(**batch, 
-                                                            max_new_tokens = max_new_tokens, 
-                                                            use_cache = True,
-                                                            temperature = temperature,
-                                                            do_sample = do_sample,
-                                                            top_p = top_p,
-                                                            top_k = top_k)
+            outputs = self.model_manager.model.generate(**batch, 
+                                                        max_new_tokens = generate_args["max_new_tokens"], 
+                                                        use_cache = True,
+                                                        temperature = generate_args["temperature"],
+                                                        do_sample = generate_args["do_sample"],
+                                                        top_p = generate_args["top_p"],
+                                                        top_k = generate_args["top_k"])
             gold_texts.extend(labels)
         
             if data_type == "instruction":
