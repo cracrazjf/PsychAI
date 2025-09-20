@@ -431,10 +431,11 @@ class Evaluator:
             results[data_name] = {}
             if max_samples:
                 data = data.select(range(max_samples))
-            res = self.evaluate_outputs(data_type, data, 
-                                        labels_list=labels_map[data_name], 
+            res = self.evaluate_outputs(data,
+                                        data_type,
                                         batch_size=batch_size,
-                                        generate_args=generate_args)
+                                        generate_args=generate_args,
+                                        labels_list=labels_map[data_name])
             results[data_name] = res
 
         
@@ -537,16 +538,17 @@ class Evaluator:
             default_generate_args = self.config.GENERATE_ARGS
             
             prompts = {
-                "max_new_tokens": (int, "Enter the maximum number of new tokens (empty for default): "),
-                "temperature": (float, "Enter temperature (empty for default): "),
-                "do_sample": (lambda x: x.lower() in ["true", "1", "yes"], "Enter whether to sample tokens [True/False] (empty for default): "),
-                "top_p": (float, "Enter top_p (empty for default): "),
-                "top_k": (int, "Enter top_k (empty for default): "),
+                "max_new_tokens": (int, "Please enter the maximum number of new tokens: "),
+                "temperature": (float, "Please enter the temperature: "),
+                "do_sample": (lambda x: x.lower() in ["true", "1", "yes"], "Please enter whether to sample tokens [True/False]: "),
+                "top_p": (float, "Please enter top_p: "),
+                "top_k": (int, "Please enter top_k: "),
             }
             if is_reasoning:
-                prompts["reasoning_effort"] = (str, "Enter reasoning_effort [low/medium/high] (empty for default): ")
+                prompts["reasoning_effort"] = (str, "Please enter the reasoning effort [low/medium/high]: ")
 
             generate_args = {}
+            print("\nLeave blank if you want to use the default value")
             for key, (cast, message) in prompts.items():
                 raw = input(message).strip()
                 if raw == "":
@@ -564,7 +566,6 @@ class Evaluator:
 
             return generate_args
 
-
         def _get_model_args():
             while True:
                     reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
@@ -577,11 +578,12 @@ class Evaluator:
                     else:
                         print("⚠️ Please enter 'y' or 'n'.")
             prompts = {
-                    "max_seq_length": (int, "Enter max_seq_length (empty for default): ", 2048),
-                    "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Enter load_in_4bit [True/False] (empty for default): ", True),
-                    "dtype": (str, "Enter dtype (empty for default): ", None),
+                    "max_seq_length": (int, "Please enter maximum context window size: ", 2048),
+                    "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Load the model in 4bit [True/False]: ", True),
+                    "dtype": (str, "Please enter dtype: ", None),
                 }
             model_args = {}
+            print("\nLeave blank if you want to use the default value")
             for key, (cast, message, default) in prompts.items():
                 raw = input(message).strip()
                 if raw == "":
@@ -649,7 +651,7 @@ class Evaluator:
 
                 generate_args = _get_generate_args(self.model_manager.reasoning)
 
-                system_prompt = input("Enter system prompt (optional): ").strip()
+                system_prompt = input("Please enter the system prompt (optional): ").strip()
                 messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
                 while True:
