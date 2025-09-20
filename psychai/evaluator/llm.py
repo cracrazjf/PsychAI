@@ -311,6 +311,7 @@ class Evaluator:
             labels = batch.pop("labels")    
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
+                                                        pad_token_id=self.model_manager.tokenizer.pad_token_id,
                                                         max_new_tokens = generate_args["max_new_tokens"], 
                                                         temperature = generate_args["temperature"],
                                                         do_sample = generate_args["do_sample"],
