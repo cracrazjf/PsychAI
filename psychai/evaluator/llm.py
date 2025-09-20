@@ -331,8 +331,9 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_output_seqs = sequences[:, input_len:]
                 valid = (sliced_output_seqs != pad_id)
+                print(f"valid: {valid}")
                 valid_idx = valid.sum(dim=1)
-                print(f"valid: {valid_idx}")
+                print(f"valid_idx: {valid_idx}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
