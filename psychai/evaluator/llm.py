@@ -338,8 +338,8 @@ class Evaluator:
                     print(f"prompt_len: {prompt_len}")
                     sliced_output = sequences[i, prompt_len:]
                     sliced_outputs.append(sliced_output)
-                    # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
-                    # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
+                    print(f"full outputs: {self.model_manager.tokenizer.batch_decode(outputs[i], skip_special_tokens=False)}") 
+                    print(f"sliced_output: {self.model_manager.tokenizer.batch_decode(sliced_output, skip_special_tokens=False)}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
