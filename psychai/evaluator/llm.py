@@ -308,11 +308,11 @@ class Evaluator:
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
                                                         max_new_tokens = generate_args["max_new_tokens"], 
-                                                        use_cache = True,
                                                         temperature = generate_args["temperature"],
                                                         do_sample = generate_args["do_sample"],
                                                         top_p = generate_args["top_p"],
-                                                        top_k = generate_args["top_k"])
+                                                        top_k = generate_args["top_k"],
+                                                        use_cache = True)
             gold_texts.extend(labels)
         
             if data_type == "instruction":
@@ -331,6 +331,8 @@ class Evaluator:
                     prompt_lens = attn.sum(dim=1) 
                     sliced_output = outputs[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
+                    print(f"full outputs: {outputs[i]}") 
+                    print(f"sliced_output: {sliced_output}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
