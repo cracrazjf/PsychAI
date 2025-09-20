@@ -330,7 +330,7 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_output_seqs = []
                 sliced_output_scores = []
-                for i in range(outputs.size(0)):
+                for i in range(sequences.size(0)):
                     sliced_output_seq = sequences[i, input_len:]
                     sliced_output_seqs.append(sliced_output_seq)
                     # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
