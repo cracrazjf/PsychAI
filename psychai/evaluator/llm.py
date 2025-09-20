@@ -330,6 +330,7 @@ class Evaluator:
                 pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_output_seqs = sequences[:, input_len:]
+                print(f"sliced_output_seqs: {self.model_manager.tokenizer.batch_decode(sliced_output_seqs, skip_special_tokens=False)}")
                 valid = (sliced_output_seqs != pad_id)
                 print(f"valid: {valid}")
                 valid_idx = valid.sum(dim=1)
