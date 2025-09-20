@@ -410,63 +410,53 @@ class Evaluator:
     def benchmark_text(
         self,
         model_name: str,
-        dataset_names: Union[List[str], str],
+        model_path: str,
+        reasoning: bool,
+        data_map: Dict[str, str],
         data_type: str,
         labels_map: Dict[str, Any],
-        reasoning: bool,
         max_samples: Optional[int] = None,
-        max_seq_length: Optional[int] = None,
-        load_in_4bit: Optional[bool] = None,
-        dtype: Optional[str] = None,
+        model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None,
-        save_summary: Optional[bool] = None,
         output_path: Optional[str] = None,
     ) -> Dict[str, Dict[str, Optional[float]]]:
         
-        selected_model = self.select_models(model_name)
-        selected_datasets = self.select_datasets(dataset_names)
-        model_path = selected_model.get(model_name, model_name)
         results= {}
 
-        max_seq_length = max_seq_length or self.config.MAX_SEQ_LENGTH
-        load_in_4bit = load_in_4bit or self.config.LOAD_IN_4BIT
-        dtype = dtype or self.config.DTYPE
-        generate_args = generate_args or self.config.GENERATE_ARGS
+        self.load_model_and_tokenizer(model_name, model_path, reasoning, model_args["max_seq_length"], model_args["load_in_4bit"], model_args["dtype"])
 
-        self.load_model_and_tokenizer(model_name, model_path, reasoning, max_seq_length, load_in_4bit, dtype)
-
-        for dataset_name, data_path in selected_datasets.items():
-            test_data = load_dataset("json", data_files=data_path, split="train")
-            results[dataset_name] = {}
+        for data_name, data_path in data_map.items():
+            data = load_dataset("json", data_files=data_path, split="train")
+            results[data_name] = {}
             if max_samples:
-                test_data = test_data.select(range(max_samples))
-            res = self.evaluate_outputs(data_type, test_data, 
-                                        labels_list=labels_map.get(dataset_name), 
+                data = data.select(range(max_samples))
+            res = self.evaluate_outputs(data_type, data, 
+                                        labels_list=labels_map[data_name], 
                                         generate_args=generate_args)
-            results[dataset_name] = res
+            results[data_name] = res
 
         
         print(f"\n{'='*20} BENCHMARK SUMMARY {'='*20}")
         print(f"Model: {model_name}")
         print("-" * 40)
-        for dataset_name in selected_datasets.keys():
-            print(f"\n📊 Dataset: {dataset_name}")
+        for data_name in data_map.keys():
+            print(f"\n📊 Dataset: {data_name}")
             print("-" * 40)
             
-            accuracy = results[dataset_name].get("accuracy", None)
+            accuracy = results[data_name].get("accuracy", None)
             if accuracy is not None:
-                print(f"  {dataset_name:20s}: {accuracy:.2%}")
+                print(f"  {data_name:20s}: {accuracy:.2%}")
             else:
-                print(f"  {dataset_name:20s}: Failed")
+                print(f"  {data_name:20s}: Failed")
 
-        if save_summary:
+        if output_path:
             out_dir = Path(output_path)
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / f"benchmark_{model_name}.json"
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "model": model_name,
-                    "datasets": list(selected_datasets.keys()),
+                    "datasets": list(data_map.keys()),
                     "results": results,
                 }, f, indent=2)
             print(f"💾 Benchmark summary saved to {out_path}")
@@ -571,6 +561,36 @@ class Evaluator:
 
             return generate_args
 
+
+        def _get_model_args():
+            while True:
+                    reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
+                    if reasoning_in in ("y", "yes"):
+                        reasoning = True
+                        break
+                    elif reasoning_in in ("n", "no"):
+                        reasoning = False
+                        break
+                    else:
+                        print("⚠️ Please enter 'y' or 'n'.")
+            prompts = {
+                    "max_seq_length": (int, "Enter max_seq_length (empty for default): ", 2048),
+                    "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Enter load_in_4bit [True/False] (empty for default): ", True),
+                    "dtype": (str, "Enter dtype (empty for default): ", None),
+                }
+            model_args = {}
+            for key, (cast, message, default) in prompts.items():
+                raw = input(message).strip()
+                if raw == "":
+                    model_args[key] = default
+                else:
+                    try:
+                        model_args[key] = cast(raw)
+                    except ValueError:
+                        print(f"⚠️ Invalid input for {key}, using default.")
+                        model_args[key] = default
+            return reasoning, model_args
+
         print("\n Welcome to PSYCHAI Interactive LLM Evaluator")
         print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
 
@@ -600,33 +620,7 @@ class Evaluator:
                 continue
 
             if user.startswith("switch "):
-                while True:
-                    reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
-                    if reasoning_in in ("y", "yes"):
-                        reasoning = True
-                        break
-                    elif reasoning_in in ("n", "no"):
-                        reasoning = False
-                        break
-                    else:
-                        print("⚠️ Please enter 'y' or 'n'.")
-                prompts = {
-                        "max_seq_length": (int, "Enter max_seq_length (empty for default): ", 2048),
-                        "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Enter load_in_4bit [True/False] (empty for default): ", True),
-                        "dtype": (str, "Enter dtype (empty for default): ", None),
-                    }
-                model_args = {}
-                for key, (cast, message, default) in prompts.items():
-                    raw = input(message).strip()
-                    if raw == "":
-                        model_args[key] = default
-                    else:
-                        try:
-                            model_args[key] = cast(raw)
-                        except ValueError:
-                            print(f"⚠️ Invalid input for {key}, using default.")
-                            model_args[key] = default
-
+                reasoning, model_args = _get_model_args()
                 model_name = user.split(" ", 1)[1].strip()
                 model_path = models.get(model_name, model_name)
                 self.load_model_and_tokenizer(model_name,
@@ -670,45 +664,46 @@ class Evaluator:
                 continue
 
             if user == "benchmark":
-                print("🎮 The benchmark command is used to evaluate the performance of a model on multiple datasets.")
+                print("You've entered the benchmark mode, you can run a single model on multiple datasets.")
+
                 model_name = input("Please enter the model name: ").strip()
-                reasoning = input("Is the model reasoning? (y/n): ").strip()
-                reasoning = reasoning.lower() == "y"
-                max_seq_length = input("Please enter the max_seq_length(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
-                load_in_4bit = input("Enter load_in_4bit(empty for default): ").strip() or self.config.LOAD_IN_4BIT
-                dtype = input("Enter dtype(empty for default): ").strip() or self.config.DTYPE
-                dataset_names = input("Please enter the datasets (separated by comma or 'all'): ").strip()
-                if dataset_names == "all":
-                    dataset_names = list(datasets.keys())
+                model_path = models.get(model_name, model_name)
+                reasoning, model_args = _get_model_args()
+
+                print(f"Here are the available datasets:")
+                print("\n".join(datasets.keys()) or "(none)")
+                data_names = input("Please enter the data names (separated by comma or 'all'): ").strip()
+                if data_names == "all":
+                    data_names = list(datasets.keys())
                 else:
-                    dataset_names = [d.strip() for d in dataset_names.split(",")]
-                data_type = input("Please enter the data type(chat or instruction): ").strip()
+                    data_names = [d.strip() for d in data_names.split(",")]
+                selected_data = {data_name: datasets[data_name] for data_name in data_names}
+                data_type = input("Please enter the data format(chat or instruction): ").strip()
                 labels_map = {}
-                for dataset_name in dataset_names:
+                for data_name in data_names:
                     while True:
-                        labels = input(f"Please enter the labels for the dataset {dataset_name} e.g.[label1,label2]: ").strip()
+                        labels = input(f"Please enter the true labels for {data_name} e.g.[label1,label2]: ").strip()
                         if labels:
                             labels = ast.literal_eval(labels)
-                            labels_map[dataset_name] = labels
+                            labels_map[data_name] = labels
                             break
                         else:
-                            print("You must enter labels for each dataset")
+                            print("You must enter labels for each data")
 
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
 
-                generate_args = _get_generate_args()
-                print(f"Evaluating the model {model_name} on the datasets {dataset_names}...")
+                generate_args = _get_generate_args(reasoning)
+                print(f"Will start evaluating {model_name} on {data_names}...")
 
                 self.benchmark_text(model_name, 
-                                    dataset_names, 
+                                    model_path,
+                                    reasoning, 
+                                    selected_data, 
                                     data_type,
                                     labels_map, 
-                                    reasoning, 
-                                    max_samples=max_samples, 
-                                    max_seq_length=max_seq_length, 
-                                    load_in_4bit=load_in_4bit, 
-                                    dtype=dtype, 
+                                    max_samples=max_samples,
+                                    model_args=model_args,
                                     generate_args=generate_args)
                 continue
 
