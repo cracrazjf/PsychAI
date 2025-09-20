@@ -331,7 +331,7 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_output_seqs = sequences[:, input_len:]
                 valid = (sliced_output_seqs != pad_id)
-                valid_idx = int(valid.long().sum().item()) if valid.any() else 0
+                valid_idx = valid.sum(dim=1)
                 print(f"valid: {valid_idx}")
                 
                 if self.model_manager.reasoning:
