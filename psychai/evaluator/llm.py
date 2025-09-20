@@ -319,7 +319,8 @@ class Evaluator:
             
             sequences = outputs.sequences
             scores = outputs.scores
-            print(f"scores: {scores.shape}")
+            print(f"scores: {len(scores)}")
+            print(f"sequences: {sequences.shape}")
 
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
