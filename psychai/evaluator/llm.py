@@ -312,7 +312,11 @@ class Evaluator:
                                                         do_sample = generate_args["do_sample"],
                                                         top_p = generate_args["top_p"],
                                                         top_k = generate_args["top_k"],
-                                                        use_cache = True)
+                                                        use_cache = True,
+                                                        return_dict_in_generate=True,
+                                                        output_scores=True)
+            sequences = outputs.sequences
+            scores = outputs.scores
             gold_texts.extend(labels)
             input_len = batch["input_ids"].size(1)
             if data_type == "instruction":
@@ -324,17 +328,18 @@ class Evaluator:
                     predictions.append(pred)
                 pred_texts.extend(predictions)
             elif data_type == "chat":
-                sliced_outputs = []
+                sliced_output_seqs = []
+                sliced_output_scores = []
                 for i in range(outputs.size(0)):
-                    sliced_output = outputs[i, input_len:]
-                    sliced_outputs.append(sliced_output)
-                    print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
+                    sliced_output_seq = sequences[i, input_len:]
+                    sliced_output_seqs.append(sliced_output_seq)
+                    # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
                     # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
                         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-                        sliced_outputs,
+                        sliced_output_seqs,
                         skip_special_tokens=False
                     )
                     analysis_re, final_re = self.get_analysis_and_final_re()
@@ -360,7 +365,7 @@ class Evaluator:
                 else:
                     pred_text = self.model_manager.tokenizer.batch_decode(
                         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-                        sliced_outputs,
+                        sliced_output_seqs,
                         skip_special_tokens=True
                     )
                     pred_texts.extend(pred_text)
