@@ -314,8 +314,8 @@ class Evaluator:
                                                         top_k = generate_args["top_k"],
                                                         use_cache = True)
             gold_texts.extend(labels)
-            attn = batch["attention_mask"]
-            prompt_lens = attn.sum(dim=1)
+            # attn = batch["attention_mask"]
+            # prompt_lens = attn.sum(dim=1)
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 predictions = []
@@ -327,8 +327,8 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_outputs = []
                 for i in range(outputs.size(0)):
-                    # input_len = batch["input_ids"][i].shape[0]
-                    prompt_len = prompt_lens[i].item()
+                    prompt_len = batch["input_ids"][i].shape[0]
+                    # prompt_len = prompt_lens[i].item()
                     print(f"prompt_len: {prompt_len}")
                     sliced_output = outputs[i, prompt_len:]
                     sliced_outputs.append(sliced_output)
