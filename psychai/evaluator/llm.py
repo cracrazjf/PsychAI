@@ -312,7 +312,9 @@ class Evaluator:
                                                         do_sample = generate_args["do_sample"],
                                                         top_p = generate_args["top_p"],
                                                         top_k = generate_args["top_k"],
-                                                        use_cache = True)
+                                                        use_cache = True,
+                                                        return_dict_in_generate=True,
+                                                        output_scores=True)
             gold_texts.extend(labels)
         
             if data_type == "instruction":
@@ -329,14 +331,18 @@ class Evaluator:
                     # input_len = batch["input_ids"][i].shape[0]
                     attn = batch["attention_mask"]  # [B, T_in]
                     prompt_lens = attn.sum(dim=1) 
-                    sliced_output = outputs[i, prompt_lens:]
+                    print(f"prompt_lens: {prompt_lens}")
+                    scores = outputs.scores[i].shape
+                    print(f"scores: {scores}")
+                    sliced_output = outputs.sequences[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
-                    print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
-                    print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
+                    # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
+                    # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
-                        pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        sliced_outputs,
                         skip_special_tokens=False
                     )
                     analysis_re, final_re = self.get_analysis_and_final_re()
@@ -361,7 +367,8 @@ class Evaluator:
                     pred_texts.extend(pred_text_batch)
                 else:
                     pred_text = self.model_manager.tokenizer.batch_decode(
-                        pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                        sliced_outputs,
                         skip_special_tokens=True
                     )
                     pred_texts.extend(pred_text)
