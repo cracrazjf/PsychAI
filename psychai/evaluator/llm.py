@@ -163,12 +163,7 @@ class Evaluator:
              messages: List[Dict[str, str]], 
              generate_args: Dict[str, Any]):
         
-        max_new_tokens = generate_args.get("max_new_tokens", 128)
-        temperature = generate_args.get("temperature", 0.7)
-        do_sample = generate_args.get("do_sample", True)
-        top_p = generate_args.get("top_p", 0.95)
-        top_k = generate_args.get("top_k", 50)
-        reasoning_effort = generate_args.get("reasoning_effort", 'low')
+        reasoning_effort = generate_args.get("reasoning_effort", None)
         
         kwargs = {
             "add_generation_prompt": True,
@@ -187,11 +182,11 @@ class Evaluator:
                 self.model_manager.model.generate(
                     **formatted_inputs,
                     streamer=streamer,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    do_sample=do_sample,
-                    top_p=top_p,
-                    top_k=top_k,
+                    max_new_tokens=generate_args["max_new_tokens"],
+                    temperature=generate_args["temperature"],
+                    do_sample=generate_args["do_sample"],
+                    top_p=generate_args["top_p"],
+                    top_k=generate_args["top_k"],
                 )
         
         def to_user(s):
@@ -213,7 +208,7 @@ class Evaluator:
                 nonlocal printed_thinking_hdr
                 if not s: return
                 if not printed_thinking_hdr:
-                    to_user("\n💭 Thinking: ")
+                    to_user("\nThinking: ")
                     printed_thinking_hdr = True
                 to_user(s)
 
@@ -221,7 +216,7 @@ class Evaluator:
                 nonlocal printed_model_hdr
                 if not s: return
                 if not printed_model_hdr:
-                    to_user("\n🤖 Model: ")
+                    to_user("\nModel: ")
                     printed_model_hdr = True
                 to_user(s)
 
@@ -274,7 +269,7 @@ class Evaluator:
             analysis_re, final_re = self.get_analysis_and_final_re()
             stream_with_labels(streamer, analysis_re, final_re, to_user)
         else:
-            print("\n🤖 Model: ", end="", flush=True)
+            print("\nModel: ", end="", flush=True)
             for new_text in streamer:
                 print(new_text, end="", flush=True)
         thread.join()
@@ -669,7 +664,7 @@ class Evaluator:
 
                 while True:
                     try:
-                        msg = input("\n You: ").strip()
+                        msg = input("\nYou: ").strip()
                         messages.append({"role": "user", "content": msg})
                     except (KeyboardInterrupt, EOFError):
                         print("\n👋 Bye, See you next time!")
