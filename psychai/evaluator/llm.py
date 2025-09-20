@@ -282,6 +282,7 @@ class Evaluator:
                          labels_list: List[str] = None) -> str:
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
+        pad_id = self.model_manager.tokenizer.pad_token_id
         
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
@@ -329,6 +330,8 @@ class Evaluator:
                 pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_output_seqs = sequences[:, input_len:]
+                valid = (sliced_output_seqs != pad_id)
+                print(f"valid: {valid}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
