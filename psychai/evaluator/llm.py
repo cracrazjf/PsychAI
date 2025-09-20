@@ -265,13 +265,13 @@ class Evaluator:
 
         thread = threading.Thread(target=generate_response)
         thread.start()
-        # if self.model_manager.reasoning:
-        #     analysis_re, final_re = self.get_analysis_and_final_re()
-        #     stream_with_labels(streamer, analysis_re, final_re, to_user)
-        # else:
-        print("\nModel: ", end="", flush=True)
-        for new_text in streamer:
-            print(new_text, end="", flush=True)
+        if self.model_manager.reasoning:
+            analysis_re, final_re = self.get_analysis_and_final_re()
+            stream_with_labels(streamer, analysis_re, final_re, to_user)
+        else:
+            print("\nModel: ", end="", flush=True)
+            for new_text in streamer:
+                print(new_text, end="", flush=True)
         thread.join()
         print()
 
