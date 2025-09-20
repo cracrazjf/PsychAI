@@ -327,14 +327,16 @@ class Evaluator:
                 pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_outputs = []
-                for i in range(outputs.size(0)):
+                sequences = outputs.sequences
+                scores = outputs.scores
+                for i in range(sequences.size(0)):
                     # input_len = batch["input_ids"][i].shape[0]
                     attn = batch["attention_mask"]  # [B, T_in]
                     prompt_lens = attn.sum(dim=1) 
                     print(f"prompt_lens: {prompt_lens}")
-                    scores = outputs.scores[i].shape
+                    scores = scores[i].shape
                     print(f"scores: {scores}")
-                    sliced_output = outputs.sequences[i, prompt_lens:]
+                    sliced_output = sequences[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
                     # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
                     # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
