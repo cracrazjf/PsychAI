@@ -327,8 +327,9 @@ class Evaluator:
                 sliced_outputs = []
                 for i in range(outputs.size(0)):
                     # input_len = batch["input_ids"][i].shape[0]
-                    attn = batch["attention_mask"]  # [B, T_in]
-                    prompt_lens = attn.sum(dim=1)
+                    attn = batch["attention_mask"]
+                    print(f"attn: {attn.shape}")  # [B, T_in]
+                    prompt_lens = attn[i].sum(dim=1)
                     print(f"prompt_lens: {prompt_lens.shape}")
                     sliced_output = outputs[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
