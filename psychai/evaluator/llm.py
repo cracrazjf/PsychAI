@@ -316,7 +316,11 @@ class Evaluator:
                                                         return_dict_in_generate=True,
                                                         output_scores=True)
             gold_texts.extend(labels)
-        
+            
+            sequences = outputs.sequences
+            scores = outputs.scores
+            print(f"scores: {scores.shape}")
+
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 predictions = []
@@ -327,15 +331,10 @@ class Evaluator:
                 pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_outputs = []
-                sequences = outputs.sequences
-                scores = outputs.scores
                 for i in range(sequences.size(0)):
                     # input_len = batch["input_ids"][i].shape[0]
-                    attn = batch["attention_mask"]  # [B, T_in]
-                    prompt_lens = attn.sum(dim=1) 
-                    print(f"prompt_lens: {prompt_lens}")
-                    scores = scores[i].shape
-                    print(f"scores: {scores}")
+                    prompt_lens = batch["attention_mask"].sum(dim=1)
+                    scores = scores[i, prompt_lens:]
                     sliced_output = sequences[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
                     # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
