@@ -312,16 +312,9 @@ class Evaluator:
                                                         do_sample = generate_args["do_sample"],
                                                         top_p = generate_args["top_p"],
                                                         top_k = generate_args["top_k"],
-                                                        use_cache = True,
-                                                        return_dict_in_generate=True,
-                                                        output_scores=True)
+                                                        use_cache = True)
             gold_texts.extend(labels)
-            
-            sequences = outputs.sequences
-            scores = outputs.scores
-            prompt_len = batch["input_ids"].shape[1]
-            pad_id = self.model_manager.tokenizer.pad_token_id
-
+        
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
                 predictions = []
@@ -332,14 +325,15 @@ class Evaluator:
                 pred_texts.extend(predictions)
             elif data_type == "chat":
                 sliced_outputs = []
-                for i in range(sequences.size(0)):
-                    prompt_len = int(batch["attention_mask"][i].sum().item())
-                    # prompt_len = prompt_lens[i].item()
-                    print(f"prompt_len: {prompt_len}")
-                    sliced_output = sequences[i, prompt_len:]
+                for i in range(outputs.size(0)):
+                    # input_len = batch["input_ids"][i].shape[0]
+                    attn = batch["attention_mask"]  # [B, T_in]
+                    prompt_lens = attn.sum(dim=1)
+                    print(f"prompt_lens: {prompt_lens.shape}")
+                    sliced_output = outputs[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
-                    print(f"full outputs: {self.model_manager.tokenizer.batch_decode(outputs[i], skip_special_tokens=False)}") 
-                    print(f"sliced_output: {self.model_manager.tokenizer.batch_decode(sliced_output, skip_special_tokens=False)}")
+                    print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
+                    print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
