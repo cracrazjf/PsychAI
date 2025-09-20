@@ -284,9 +284,9 @@ class Evaluator:
         reasoning_effort = generate_args.get("reasoning_effort", None)
         
         if data_type == "chat":
-            data = data.map(partial(self.format_chat, reasoning_effort), batched=True)
+            data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
         elif data_type == "instruction":
-            data = data.map(partial(self.format_instruction, prompt_template), batched=True)
+            data = data.map(partial(self.format_instruction, prompt_template=prompt_template), batched=True)
         else:
             raise ValueError(f"Invalid data type: {data_type}")
         # data.set_format(type=None)
