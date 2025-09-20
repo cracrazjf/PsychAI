@@ -319,11 +319,8 @@ class Evaluator:
             
             sequences = outputs.sequences
             scores = outputs.scores
-            # prompt_lens = batch["attention_mask"].sum(dim=1)
+            prompt_len = batch["input_ids"].shape[1]
             pad_id = self.model_manager.tokenizer.pad_token_id
-            print(f"pad_id: {pad_id}")
-            print(f"scores: {len(scores)}")
-            print(f"sequences: {sequences.shape}")
 
             if data_type == "instruction":
                 decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
@@ -336,10 +333,10 @@ class Evaluator:
             elif data_type == "chat":
                 sliced_outputs = []
                 for i in range(sequences.size(0)):
-                    input_len = batch["input_ids"][i].shape[0]
+                    prompt_len = int(batch["attention_mask"][i].sum().item())
                     # prompt_len = prompt_lens[i].item()
-                    print(f"prompt_len: {input_len}")
-                    sliced_output = sequences[i, input_len:]
+                    print(f"prompt_len: {prompt_len}")
+                    sliced_output = sequences[i, prompt_len:]
                     sliced_outputs.append(sliced_output)
                     # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
                     # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
