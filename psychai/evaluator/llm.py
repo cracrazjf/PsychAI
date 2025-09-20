@@ -319,6 +319,8 @@ class Evaluator:
             
             sequences = outputs.sequences
             scores = outputs.scores
+            pad_id = self.model_manager.tokenizer.pad_token_id
+            print(f"pad_id: {pad_id}")
             print(f"scores: {len(scores)}")
             print(f"sequences: {sequences.shape}")
 
@@ -335,7 +337,7 @@ class Evaluator:
                 for i in range(sequences.size(0)):
                     # input_len = batch["input_ids"][i].shape[0]
                     prompt_lens = batch["attention_mask"].sum(dim=1)
-                    scores = scores[i, prompt_lens:]
+                    print(f"prompt_lens: {prompt_lens.shape}")
                     sliced_output = sequences[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
                     # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
