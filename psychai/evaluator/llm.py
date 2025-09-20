@@ -264,7 +264,9 @@ class Evaluator:
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"results.jsonl"
+        open(result_path, "w").close()
         manifest_path = result_dir / "manifest.jsonl"
+        open(manifest_path, "w").close()
         
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
