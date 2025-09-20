@@ -331,8 +331,8 @@ class Evaluator:
                     prompt_lens = attn.sum(dim=1) 
                     sliced_output = outputs[i, prompt_lens:]
                     sliced_outputs.append(sliced_output)
-                    print(f"full outputs: {outputs[i]}") 
-                    print(f"sliced_output: {sliced_output}")
+                    print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
+                    print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
