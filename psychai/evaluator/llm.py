@@ -3,24 +3,14 @@ from __future__ import annotations
 import os
 import json
 import ast
-import re
-import queue
 from tqdm import tqdm
-import pandas as pd
 import threading
 from pathlib import Path
 from functools import partial
 from ..model_manager.llm import LLM_ModelManager
 from typing import Any, Dict, List, Optional, Tuple, Union
-from transformers import LogitsProcessor, LogitsProcessorList
 import torch
-from torch.nn.utils.rnn import pad_sequence
-try:
-    from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-except Exception:  # pragma: no cover - allow usage without sklearn
-    accuracy_score = None
-    classification_report = None
-    confusion_matrix = None
+import numpy as np
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import TextIteratorStreamer
@@ -142,23 +132,6 @@ class Evaluator:
             final_re = r"<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)<\|return\|>"
         return analysis_re, final_re
     
-    class CaptureLogits(LogitsProcessor):
-            def __init__(self, out_queue: queue.Queue, top_k: int = 50):
-                self.out_queue = out_queue
-                self.top_k = top_k
-                self.step = 0
-
-            def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-                topk_vals, topk_ids = torch.topk(scores, k=min(self.top_k, scores.size(-1)), dim=-1)
-                payload = {
-                    "step": self.step,
-                    "topk_ids": topk_ids[0].detach().cpu().tolist(),
-                    "topk_vals": topk_vals[0].detach().cpu().tolist(),
-                }
-                self.out_queue.put(payload)
-                self.step += 1
-                return scores
-
     def chat(self, 
              messages: List[Dict[str, str]], 
              generate_args: Dict[str, Any]):
@@ -280,12 +253,18 @@ class Evaluator:
                          data_type: str,
                          batch_size: int,
                          generate_args: Dict[str, Any],
+                         result_dir: str,
                          prompt_template: Optional[str] = None,
-                         labels_list: List[str] = None) -> str:
+                         ):
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
         pad_id = self.model_manager.tokenizer.pad_token_id
-        print(f"pad_id: {pad_id}")
+        vocab_size = self.model_manager.tokenizer.vocab_size
+
+        result_dir = Path(result_dir)
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / f"results.jsonl"
+        manifest_path = result_dir / "manifest.jsonl"
         
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
@@ -293,7 +272,6 @@ class Evaluator:
             data = data.map(partial(self.format_instruction, prompt_template=prompt_template), batched=True)
         else:
             raise ValueError(f"Invalid data type: {data_type}")
-        # data.set_format(type=None)
 
         def collate_for_generate(batch):
             prompts = [ex["text"] for ex in batch]
@@ -303,12 +281,17 @@ class Evaluator:
 
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
 
-        pred_texts = []
-        gold_texts = []
-        think_texts = []
+        sample_id = 0
+        shard_id = 0
+        max_valid_length = 0
+        buffer = []
+
         tqdm_loader = tqdm(loader, desc="Evaluating")
         for batch in tqdm_loader:
-            labels = batch.pop("labels")    
+            # store the labels
+            labels = batch.pop("labels")  
+
+            # generate the outputs
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
                                                         pad_token_id=self.model_manager.tokenizer.pad_token_id,
@@ -320,102 +303,109 @@ class Evaluator:
                                                         use_cache = True,
                                                         return_dict_in_generate=True,
                                                         output_scores=True)
+            
+            # get corresponding scores and tokens
             sequences = outputs.sequences
             scores = torch.stack(outputs.scores, dim=1)
-            print(f"scores: {scores.shape}")
-            gold_texts.extend(labels)
+            topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
+
+            # decide the input length
             input_len = batch["input_ids"].size(1)
+
             if data_type == "instruction":
-                decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                predictions = []
-                for decoded_output in decoded_outputs:
-                    head, sep, tail = decoded_output.rpartition("### Response:")
-                    pred = (tail if sep else decoded_output).strip()
-                    predictions.append(pred)
-                pred_texts.extend(predictions)
+                pass
+                # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                # predictions = []
+                # for decoded_output in decoded_outputs:
+                #     head, sep, tail = decoded_output.rpartition("### Response:")
+                #     pred = (tail if sep else decoded_output).strip()
+                #     predictions.append(pred)
+                # pred_texts.extend(predictions)
             elif data_type == "chat":
-                sliced_output_seqs = sequences[:, input_len:]
-                print(f"sliced_output_seqs: {sliced_output_seqs}")
-                valid = (sliced_output_seqs != pad_id)
-                print(f"valid: {valid}")
-                valid_idx = valid.sum(dim=1)
-                print(f"valid_idx: {valid_idx}")
-                
-                if self.model_manager.reasoning:
-                    pred_text = self.model_manager.tokenizer.batch_decode(
-                        # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-                        sliced_output_seqs,
-                        skip_special_tokens=False
-                    )
-                    analysis_re, final_re = self.get_analysis_and_final_re()
-                    pred_text_batch = []
-                    think_text_batch = []
-                    for text in pred_text:
-                        ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
-                        FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
-                        analysis_match = ANALYSIS_RE.search(text)
-                        final_match = FINAL_RE.search(text)
-                        if analysis_match:
-                            think_text_batch.append(analysis_match.group(1).strip())
-                            if final_match:
-                                pred_text_batch.append(final_match.group(1).strip())
-                            else:
-                                pred_text_batch.append(text)
-                        else:
-                            think_text_batch.append("")
-                            pred_text_batch.append(text)
+                new_tokens = sequences[:, input_len:]
+                valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
 
-                    think_texts.extend(think_text_batch)
-                    pred_texts.extend(pred_text_batch)
-                else:
-                    pred_text = self.model_manager.tokenizer.batch_decode(
-                        sliced_output_seqs,
-                        skip_special_tokens=True
-                    )
-                    pred_texts.extend(pred_text)
+                for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
+                    valid_tokens = new_tokens[mini_batch_idx, :valid_length]
+                    valid_scores = scores[mini_batch_idx, :valid_length, :]
+                    max_valid_length = max(max_valid_length, valid_length)
 
-        for i, text in enumerate(pred_texts[:10]):
-                print("="*40, f"Example {i}", "="*40)
-                print("PRED:", text)
-                if len(think_texts) > 0:
-                    print("THINK:", think_texts[i])
-                print("GOLD:", gold_texts[i])
-                print()
+                    result = {
+                        "sample_id": sample_id,
+                        "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
+                        "label": labels[mini_batch_idx],
+                        "token_ids": valid_tokens.tolist(),
+                        "chosen_scores": valid_scores.gather(1, torch.tensor(valid_tokens).view(-1, 1)).squeeze(1).tolist(),
+                        "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
+                        "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
+                    }
+                    with open(result_path, "w", encoding="utf-8") as f:
+                        f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-        def extract_label(text: str, labels_list: Optional[List[str]]) -> str:
-                txt = text.lower().strip()
-                if labels_list:
-                    for lbl in labels_list:
-                        if lbl.lower() in txt:
-                            return lbl
-                return txt.split()[0] if txt else "unknown"
+                    buffer.append({
+                        "sample_id": sample_id, 
+                        "valid_length": valid_length,
+                        "scores": valid_scores.detach().cpu().to(torch.float16),
+                    })
 
-        pred_labels = [extract_label(p, labels_list) for p in pred_texts]
-        true_labels = [extract_label(t, labels_list) for t in gold_texts]
-        
-        if accuracy_score is not None and classification_report is not None and confusion_matrix is not None:
-            acc = float(accuracy_score(true_labels, pred_labels))
-            uniq = sorted(list(set(true_labels + pred_labels)))
-            report = classification_report(true_labels, pred_labels, labels=uniq, output_dict=True, zero_division=0)
-            cm = confusion_matrix(true_labels, pred_labels, labels=uniq)
-        
-            print("="*50)
-            print(f"Accuracy: {acc:.2%}")
-            print("="*50)
+                    def _flush_buffer():
+                        shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
+                        for i, row in enumerate(buffer):
+                            shard[i, :row["valid_length"], :] = row["scores"]
+                        shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
+                        np.savez_compressed(shard_path, shard.numpy())
 
-            print("\nClassification report:")
-            print(pd.DataFrame(report).T.round(3))   # precision, recall, f1-score
+                        with open(manifest_path, "w", encoding="utf-8") as f:
+                            for i, row in enumerate(buffer):
+                                f.write(json.dumps({
+                                    "sample_id": row["sample_id"],
+                                    "shard_path": str(shard_path),
+                                    "valid_length": row["valid_length"],
+                                    "row_idx": i,
+                                }) + "\n")
 
-            print("\nConfusion Matrix:")
-            print(pd.DataFrame(cm, index=uniq, columns=uniq))
-        
-        return {
-            "predictions": pred_texts,
-            "ground_truths": gold_texts,
-            "accuracy": acc,
-            "classification_report": report,
-            "confusion_matrix": cm.tolist(),
-        }
+                    if len(buffer) >= 100:
+                        _flush_buffer()
+                        shard_id += 1
+                        buffer = []
+
+                    sample_id += 1
+
+
+                # if self.model_manager.reasoning:
+                #     pred_text = self.model_manager.tokenizer.batch_decode(
+                #         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
+                #         sliced_output_seqs,
+                #         skip_special_tokens=False
+                #     )
+                #     analysis_re, final_re = self.get_analysis_and_final_re()
+                #     pred_text_batch = []
+                #     think_text_batch = []
+                #     for text in pred_text:
+                #         ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
+                #         FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
+                #         analysis_match = ANALYSIS_RE.search(text)
+                #         final_match = FINAL_RE.search(text)
+                #         if analysis_match:
+                #             think_text_batch.append(analysis_match.group(1).strip())
+                #             if final_match:
+                #                 pred_text_batch.append(final_match.group(1).strip())
+                #             else:
+                #                 pred_text_batch.append(text)
+                #         else:
+                #             think_text_batch.append("")
+                #             pred_text_batch.append(text)
+
+                #     think_texts.extend(think_text_batch)
+                #     pred_texts.extend(pred_text_batch)
+                # else:
+                #     pred_text = self.model_manager.tokenizer.batch_decode(
+                #         new_tokens,
+                #         skip_special_tokens=True
+                #     )
+                #     pred_texts.extend(pred_text)
+
+        _flush_buffer()
 
     def benchmark_text(
         self,
@@ -424,120 +414,31 @@ class Evaluator:
         reasoning: bool,
         data_map: Dict[str, str],
         data_type: str,
-        labels_map: Dict[str, Any],
         batch_size: int,
+        result_dir: str,
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
-        generate_args: Optional[Dict[str, Any]] = None,
-        output_path: Optional[str] = None,
+        generate_args: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Dict[str, Optional[float]]]:
-        
-        results= {}
 
-        self.load_model_and_tokenizer(model_name, model_path, reasoning, model_args["max_seq_length"], model_args["load_in_4bit"], model_args["dtype"])
+        self.load_model_and_tokenizer(model_name, 
+                                      model_path, 
+                                      reasoning, 
+                                      model_args["max_seq_length"], 
+                                      model_args["load_in_4bit"], 
+                                      model_args["dtype"])
 
         for data_name, data_path in data_map.items():
             data = load_dataset("json", data_files=data_path, split="train")
-            results[data_name] = {}
+            result_dir = f"{result_dir}/{model_name}_{data_name}"
             if max_samples:
                 data = data.select(range(max_samples))
-            res = self.evaluate_outputs(data,
-                                        data_type,
-                                        batch_size=batch_size,
-                                        generate_args=generate_args,
-                                        labels_list=labels_map[data_name])
-            results[data_name] = res
+            self.evaluate_outputs(data,
+                                  data_type,
+                                  batch_size=batch_size,
+                                  generate_args=generate_args,
+                                  result_dir=result_dir)
 
-        
-        print(f"\n{'='*20} BENCHMARK SUMMARY {'='*20}")
-        print(f"Model: {model_name}")
-        print("-" * 40)
-        for data_name in data_map.keys():
-            print(f"\n📊 Dataset: {data_name}")
-            print("-" * 40)
-            
-            accuracy = results[data_name].get("accuracy", None)
-            if accuracy is not None:
-                print(f"  {data_name:20s}: {accuracy:.2%}")
-            else:
-                print(f"  {data_name:20s}: Failed")
-
-        if output_path:
-            out_dir = Path(output_path)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"benchmark_{model_name}.json"
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "model": model_name,
-                    "datasets": list(data_map.keys()),
-                    "results": results,
-                }, f, indent=2)
-            print(f"💾 Benchmark summary saved to {out_path}")
-
-        return results
-
-    def compare_text(
-        self,
-        dataset_name: str,
-        data_type: str,
-        model_names: Union[List[str], str],
-        reasoning_map: Dict[str, bool],
-        labels: List[str],
-        max_samples: Optional[int] = None,
-        model_args_map: Optional[Dict] = None,
-        generate_args: Optional[Dict[str, Any]] = None,
-        save_summary: Optional[bool] = None,
-        output_path: Optional[str] = None,
-    ) -> Dict[str, Optional[float]]:
-
-        selected_models = self.select_models(model_names)
-        selected_dataset = self.select_datasets(dataset_name)
-
-        test_data = load_dataset("json", data_files=selected_dataset[dataset_name], split="train")
-        generate_args = generate_args or self.config.GENERATE_ARGS
-
-        results = {}
-        if max_samples:
-            test_data = test_data.select(range(max_samples))
-        for model_name, model_path in selected_models.items():
-            model_args = model_args_map.get(model_name, {})
-            max_seq_length = model_args.get("max_seq_length", self.config.MAX_SEQ_LENGTH)
-            load_in_4bit = model_args.get("load_in_4bit", self.config.LOAD_IN_4BIT)
-            dtype = model_args.get("dtype", self.config.DTYPE)
-            self.load_model_and_tokenizer(model_name, model_path, reasoning_map[model_name], max_seq_length, load_in_4bit, dtype)
-            res = self.evaluate_outputs(data_type, test_data, 
-                                        labels_list=labels, 
-                                        batch_size=batch_size,
-                                        generate_args=generate_args)
-            results[model_name] = res
-
-        print(f"\n{'='*20} COMPARISON SUMMARY {'='*20}")
-        print(f"Dataset: {dataset_name}")
-        print("-" * 40)
-
-        sorted_results = sorted(results.items(), key=lambda x: x[1].get("accuracy", 0), reverse=True)
-        for model_name, result in sorted_results:
-            print(f"\n📊 Model: {model_name}")
-            print("-" * 40)
-            accuracy = result.get("accuracy", None)
-            if accuracy is not None:
-                print(f"  {model_name:20s}: {accuracy:.2%}")
-            else:
-                print(f"  {model_name:20s}: Failed")
-
-        if save_summary:
-            out_dir = Path(output_path)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"comparison_{dataset_name}.json"
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "dataset": dataset_name,
-                    "models": selected_models.keys(),
-                    "results": results,
-                }, f, indent=2)
-            print(f"💾 Comparison saved to {out_path}")
-
-        return results
 
     def interactive_text(self) -> None:
         """Simple REPL for chatting, switching models, benchmark and compare."""
@@ -694,16 +595,17 @@ class Evaluator:
                     data_names = [d.strip() for d in data_names.split(",")]
                 selected_data = {data_name: datasets[data_name] for data_name in data_names}
                 data_type = input("Please enter the data format(chat or instruction): ").strip()
-                labels_map = {}
-                for data_name in data_names:
-                    while True:
-                        labels = input(f"Please enter the true labels for {data_name} e.g.[label1,label2]: ").strip()
-                        if labels:
-                            labels = ast.literal_eval(labels)
-                            labels_map[data_name] = labels
-                            break
-                        else:
-                            print("You must enter labels for each data")
+                result_dir = input("Where do you want to save the results: ").strip()
+                # labels_map = {}
+                # for data_name in data_names:
+                #     while True:
+                #         labels = input(f"Please enter the true labels for {data_name} e.g.[label1,label2]: ").strip()
+                #         if labels:
+                #             labels = ast.literal_eval(labels)
+                #             labels_map[data_name] = labels
+                #             break
+                #         else:
+                #             print("You must enter labels for each data")
 
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
@@ -718,48 +620,12 @@ class Evaluator:
                                     reasoning, 
                                     selected_data, 
                                     data_type,
-                                    labels_map, 
+                                    result_dir=result_dir,
+                                    # labels_map, 
                                     max_samples=max_samples,
                                     batch_size=batch_size,
                                     model_args=model_args,
                                     generate_args=generate_args)
-                continue
-
-            if user == "compare":
-                print("🎮 The compare command is used to compare the performance of multiple models on a single dataset.")
-                model_names = input("Please enter the models (separated by comma or 'all'): ").strip()
-                if model_names == "all":
-                    model_names = list(models.keys())
-                else:
-                    model_names = [m.strip() for m in model_names.split(",")]
-                reasoning_map = {}
-                model_args_map = {}
-                for model_name in model_names:
-                    reasoning_map[model_name] = input(f"Is the model {model_name} reasoning? (y/n): ").strip().lower() == "y"
-                    max_seq_length = input(f"Enter max_seq_length for {model_name}(empty for default): ").strip() or self.config.MAX_SEQ_LENGTH
-                    load_in_4bit = input(f"Enter load_in_4bit for {model_name}(empty for default): ").strip() or self.config.LOAD_IN_4BIT
-                    dtype = input(f"Enter dtype for {model_name}(empty for default): ").strip() or self.config.DTYPE
-                    model_args_map[model_name] = {  
-                        "max_seq_length": max_seq_length,
-                        "load_in_4bit": load_in_4bit,
-                        "dtype": dtype,
-                    }
-                dataset_name = input("Please enter the dataset name: ").strip()
-                data_type = input("Please enter the data type(chat or instruction): ").strip()
-                max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
-                max_samples = int(max_samples) if max_samples else None
-
-                while True:
-                    labels = input(f"Please enter the labels for the dataset {dataset_name} e.g. [label1,label2]: ").strip()
-                    if labels:
-                        labels = ast.literal_eval(labels)
-                        break
-                    else:
-                        print("You must enter labels for the dataset")
-
-                generate_args = _get_generate_args()
-                print(f"😎 Comparing the models {model_names} on the dataset {dataset_name}...")
-                self.compare_text(dataset_name, data_type, model_names, reasoning_map, labels, max_samples=max_samples, model_args_map=model_args_map, generate_args=generate_args)
                 continue
 
             print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | help | quit")
