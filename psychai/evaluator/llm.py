@@ -282,7 +282,7 @@ class Evaluator:
                          labels_list: List[str] = None) -> str:
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
-        pad_id = self.model_manager.tokenizer.finetune_right_pad_id
+        pad_id = self.model_manager.tokenizer.eos_token_id
         print(f"pad_id: {pad_id}")
         
         if data_type == "chat":
