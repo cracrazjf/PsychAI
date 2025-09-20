@@ -328,13 +328,7 @@ class Evaluator:
                     predictions.append(pred)
                 pred_texts.extend(predictions)
             elif data_type == "chat":
-                sliced_output_seqs = []
-                sliced_output_scores = []
-                for i in range(sequences.size(0)):
-                    sliced_output_seq = sequences[i, input_len:]
-                    sliced_output_seqs.append(sliced_output_seq)
-                    # print(f"full outputs: {self.model_manager.tokenizer.decode(outputs[i], skip_special_tokens=False)}") 
-                    # print(f"sliced_output: {self.model_manager.tokenizer.decode(sliced_output, skip_special_tokens=False)}")
+                sliced_output_seqs = sequences[:, input_len:]
                 
                 if self.model_manager.reasoning:
                     pred_text = self.model_manager.tokenizer.batch_decode(
@@ -364,7 +358,6 @@ class Evaluator:
                     pred_texts.extend(pred_text_batch)
                 else:
                     pred_text = self.model_manager.tokenizer.batch_decode(
-                        # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
                         sliced_output_seqs,
                         skip_special_tokens=True
                     )
