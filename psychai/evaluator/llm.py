@@ -258,11 +258,11 @@ class Evaluator:
                          ):
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
-        pad_id = self.model_manager.tokenizer.pad_token_id
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"results.jsonl"
+        print(f"Result path: {result_path}")
         open(result_path, "w").close()
         manifest_path = result_dir / "manifest.jsonl"
         open(manifest_path, "w").close()
@@ -327,27 +327,25 @@ class Evaluator:
             elif data_type == "chat":
                 new_tokens = sequences[:, input_len:]
                 eos_ids = torch.tensor(self.model_manager.model.generation_config.eos_token_id, device=self.device)
-                valid_new_tokens = ~torch.isin(new_tokens, eos_ids)
-                print(f"Valid new tokens: {valid_new_tokens}")
-                valid_new_tokens_length = valid_new_tokens.sum(dim=1)
-                print(f"Valid new tokens length: {valid_new_tokens_length}")
+                valid_new_tokens_mask = ~torch.isin(new_tokens, eos_ids)
+                valid_new_tokens_length = valid_new_tokens_mask.sum(dim=1)
 
-        #         for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
-        #             valid_tokens = new_tokens[mini_batch_idx, :valid_length]
-        #             valid_scores = scores[mini_batch_idx, :valid_length, :]
-        #             max_valid_length = max(max_valid_length, valid_length)
+                for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
+                    valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
+                    valid_scores = scores[mini_batch_idx, :valid_length, :]
+                    max_valid_length = max(max_valid_length, valid_length)
 
-        #             result = {
-        #                 "sample_id": sample_id,
-        #                 "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
-        #                 "label": labels[mini_batch_idx],
-        #                 "token_ids": valid_tokens.tolist(),
-        #                 "chosen_scores": valid_scores.gather(1, valid_tokens.view(-1, 1)).squeeze(1).tolist(),
-        #                 "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
-        #                 "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
-        #             }
-        #             with open(result_path, "w", encoding="utf-8") as f:
-        #                 f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    result = {
+                        "sample_id": sample_id,
+                        "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
+                        "label": labels[mini_batch_idx],
+                        "token_ids": valid_new_tokens.tolist(),
+                        "chosen_scores": valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist(),
+                        "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
+                        "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
+                    }
+                    with open(result_path, "w", encoding="utf-8") as f:
+                        f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
         #             buffer.append({
         #                 "sample_id": sample_id, 
