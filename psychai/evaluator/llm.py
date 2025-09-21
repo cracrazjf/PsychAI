@@ -326,9 +326,11 @@ class Evaluator:
         #         # pred_texts.extend(predictions)
             elif data_type == "chat":
                 new_tokens = sequences[:, input_len:]
-                end_of_text_id = self.model_manager.model.generation_config.eos_token_id
-                print(f"End of text id type: {type(end_of_text_id)}")
-                valid_new_tokens_length = (new_tokens != end_of_text_id).sum(dim=1)
+                eos_ids = torch.tensor(self.model_manager.model.generation_config.eos_token_id, device=self.device)
+                valid_new_tokens = ~torch.isin(new_tokens, eos_ids)
+                print(f"Valid new tokens: {valid_new_tokens}")
+                valid_new_tokens_length = valid_new_tokens.sum(dim=1)
+                print(f"Valid new tokens length: {valid_new_tokens_length}")
 
         #         for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
         #             valid_tokens = new_tokens[mini_batch_idx, :valid_length]
