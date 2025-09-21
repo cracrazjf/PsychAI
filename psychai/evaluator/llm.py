@@ -61,8 +61,6 @@ class Evaluator:
                                       load_in_4bit=load_in_4bit, 
                                       full_finetuning=False, 
                                       dtype=dtype)
-        # if self.model_manager.tokenizer.pad_token is None:
-        #     self.model_manager.tokenizer.pad_token = self.model_manager.tokenizer.eos_token
         self.device = next(self.model_manager.model.parameters()).device
 
     def list_available_datasets(self) -> Dict[str, Any]:
@@ -282,12 +280,10 @@ class Evaluator:
 
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
 
-        print(self.model_manager.tokenizer.pad_token_id)
-
         sample_id = 0
         shard_id = 0
         max_valid_length = 0
-        buffer = []
+        temp_full_scores = []
 
         tqdm_loader = tqdm(loader, desc="Evaluating")
         for batch in tqdm_loader:
@@ -338,6 +334,7 @@ class Evaluator:
                     result = {
                         "sample_id": sample_id,
                         "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
+                        "prediction": self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=True),
                         "label": labels[mini_batch_idx],
                         "token_ids": valid_new_tokens.tolist(),
                         "chosen_scores": valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist(),
@@ -347,36 +344,36 @@ class Evaluator:
                     with open(result_path, "w", encoding="utf-8") as f:
                         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-        #             buffer.append({
-        #                 "sample_id": sample_id, 
-        #                 "valid_length": valid_length,
-        #                 "scores": valid_scores.detach().cpu().to(torch.float16),
-        #             })
+                    temp_full_scores.append({
+                        "sample_id": sample_id,
+                        "valid_length": valid_length,
+                        "scores": valid_scores.detach().cpu().to(torch.float16),
+                    })
 
-        #             def _flush_buffer():
-        #                 _,_,vocab_size = buffer[0]["scores"].shape
-        #                 shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
-        #                 for i, row in enumerate(buffer):
-        #                     shard[i, :row["valid_length"], :] = row["scores"]
-        #                 shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
-        #                 np.savez_compressed(shard_path, shard.numpy())
+                    def _flush_buffer(buffer):
+                        _,_,vocab_size = buffer[0]["scores"].shape
+                        shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
+                        for i, row in enumerate(buffer):
+                            shard[i, :row["valid_length"], :] = row["scores"]
+                        shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
+                        np.savez_compressed(shard_path, shard.numpy())
 
-        #                 with open(manifest_path, "w", encoding="utf-8") as f:
-        #                     for i, row in enumerate(buffer):
-        #                         f.write(json.dumps({
-        #                             "sample_id": row["sample_id"],
-        #                             "shard_path": str(shard_path),
-        #                             "valid_length": row["valid_length"],
-        #                             "row_idx": i,
-        #                         }) + "\n")
+                        with open(manifest_path, "w", encoding="utf-8") as f:
+                            for i, row in enumerate(buffer):
+                                f.write(json.dumps({
+                                    "sample_id": row["sample_id"],
+                                    "shard_path": str(shard_path),
+                                    "valid_length": row["valid_length"],
+                                    "row_idx": i,
+                                }) + "\n")
 
-        #             if len(buffer) >= 100:
-        #                 _flush_buffer()
-        #                 shard_id += 1
-        #                 max_valid_length = 0
-        #                 buffer = []
+                    if len(temp_full_scores) >= 100:
+                        _flush_buffer(temp_full_scores)
+                        shard_id += 1
+                        max_valid_length = 0
+                        temp_full_scores = []
 
-        #             sample_id += 1
+                    sample_id += 1
 
 
         #         # if self.model_manager.reasoning:
@@ -412,7 +409,7 @@ class Evaluator:
         #         #     )
         #         #     pred_texts.extend(pred_text)
 
-        # _flush_buffer()
+        _flush_buffer(temp_full_scores)
 
     def benchmark_text(
         self,
