@@ -310,7 +310,7 @@ class Evaluator:
             scores = torch.stack(outputs.scores, dim=1)
             logits = torch.stack(outputs.logits, dim=1)
             topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
-            topk_logits = logits.gather(-1, topk_ids)
+            topk_logits, _ = torch.topk(logits, k=generate_args["top_k"], dim=-1)
             print(f"Topk logits: {topk_logits}")
             print(f"Topk scores: {topk_scores}")
 
