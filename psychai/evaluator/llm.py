@@ -296,9 +296,7 @@ class Evaluator:
 
             # generate the outputs
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            print(f"input_ids: {self.model_manager.tokenizer.batch_decode(batch['input_ids'], skip_special_tokens=False)}")
-            outputs = self.model_manager.model.generate(**batch, 
-                                                        # pad_token_id=self.model_manager.tokenizer.pad_token_id,
+            outputs = self.model_manager.model.generate(**batch,
                                                         max_new_tokens = generate_args["max_new_tokens"], 
                                                         temperature = generate_args["temperature"],
                                                         do_sample = generate_args["do_sample"],
@@ -311,14 +309,14 @@ class Evaluator:
             # get corresponding scores and tokens
             sequences = outputs.sequences
             # print(f"Sequences: {sequences}")
-        #     scores = torch.stack(outputs.scores, dim=1)
-        #     topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
+            scores = torch.stack(outputs.scores, dim=1)
+            topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
 
         #     # decide the input length
-        #     input_len = batch["input_ids"].size(1)
+            input_len = batch["input_ids"].size(1)
 
-        #     if data_type == "instruction":
-        #         pass
+            if data_type == "instruction":
+                pass
         #         # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         #         # predictions = []
         #         # for decoded_output in decoded_outputs:
@@ -326,9 +324,11 @@ class Evaluator:
         #         #     pred = (tail if sep else decoded_output).strip()
         #         #     predictions.append(pred)
         #         # pred_texts.extend(predictions)
-        #     elif data_type == "chat":
-        #         new_tokens = sequences[:, input_len:]
-        #         valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
+            elif data_type == "chat":
+                new_tokens = sequences[:, input_len:]
+                print(f"New tokens: {new_tokens}")
+                print(f"Pad id: {pad_id}")
+                valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
 
         #         for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
         #             valid_tokens = new_tokens[mini_batch_idx, :valid_length]
