@@ -61,8 +61,8 @@ class Evaluator:
                                       load_in_4bit=load_in_4bit, 
                                       full_finetuning=False, 
                                       dtype=dtype)
-        if self.model_manager.tokenizer.pad_token is None:
-            self.model_manager.tokenizer.pad_token = self.model_manager.tokenizer.eos_token
+        # if self.model_manager.tokenizer.pad_token is None:
+        #     self.model_manager.tokenizer.pad_token = self.model_manager.tokenizer.eos_token
         self.device = next(self.model_manager.model.parameters()).device
 
     def list_available_datasets(self) -> Dict[str, Any]:
