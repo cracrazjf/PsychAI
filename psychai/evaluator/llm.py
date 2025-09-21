@@ -308,7 +308,11 @@ class Evaluator:
             sequences = outputs.sequences
             # print(f"Sequences: {sequences}")
             scores = torch.stack(outputs.scores, dim=1)
+            logits = torch.stack(outputs.logits, dim=1)
             topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
+            topk_logits = logits.gather(-1, topk_ids)
+            print(f"Topk logits: {topk_logits}")
+            print(f"Topk scores: {topk_scores}")
 
         #     # decide the input length
             input_len = batch["input_ids"].size(1)
@@ -353,7 +357,6 @@ class Evaluator:
                     })
 
                     def _flush_buffer(buffer):
-                        print(f"scores shape: {buffer[0]['scores'].shape}")
                         _,vocab_size = buffer[0]["scores"].shape
                         shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
                         for i, row in enumerate(buffer):
