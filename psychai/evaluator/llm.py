@@ -327,6 +327,8 @@ class Evaluator:
             elif data_type == "chat":
                 new_tokens = sequences[:, input_len:]
                 print(f"New tokens: {new_tokens}")
+                print(f"New tokens decoded: {self.model_manager.tokenizer.batch_decode(new_tokens, skip_special_tokens=False)}")
+                print(f"eos token id: {self.model_manager.tokenizer.eos_token_id}")
                 print(f"Pad id: {pad_id}")
                 valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
 
