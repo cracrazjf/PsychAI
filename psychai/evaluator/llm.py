@@ -346,7 +346,7 @@ class Evaluator:
 
                     temp_full_scores.append({
                         "sample_id": sample_id,
-                        "valid_length": valid_length,
+                        "valid_length": int(valid_length),
                         "scores": valid_scores.detach().cpu().to(torch.float16),
                     })
 
