@@ -295,7 +295,7 @@ class Evaluator:
             # generate the outputs
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model.generate(**batch, 
-                                                        # pad_token_id=self.model_manager.tokenizer.pad_token_id,
+                                                        pad_token_id=self.model_manager.tokenizer.pad_token_id,
                                                         max_new_tokens = generate_args["max_new_tokens"], 
                                                         temperature = generate_args["temperature"],
                                                         do_sample = generate_args["do_sample"],
@@ -305,8 +305,9 @@ class Evaluator:
                                                         return_dict_in_generate=True,
                                                         output_scores=True)
             
-        #     # get corresponding scores and tokens
-        #     sequences = outputs.sequences
+            # get corresponding scores and tokens
+            sequences = outputs.sequences
+            print(f"Sequences: {self.model_manager.tokenizer.batch_decode(sequences, skip_special_tokens=False)}")
         #     scores = torch.stack(outputs.scores, dim=1)
         #     topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
 
