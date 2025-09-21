@@ -341,7 +341,7 @@ class Evaluator:
                         "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
                         "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
                     }
-                    with open(result_path, "w", encoding="utf-8") as f:
+                    with open(result_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
                     temp_full_scores.append({
