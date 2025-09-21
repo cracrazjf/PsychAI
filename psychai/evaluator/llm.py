@@ -282,6 +282,8 @@ class Evaluator:
 
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
 
+        print(self.model_manager.tokenizer.pad_token_id)
+
         sample_id = 0
         shard_id = 0
         max_valid_length = 0
@@ -307,7 +309,7 @@ class Evaluator:
             
             # get corresponding scores and tokens
             sequences = outputs.sequences
-            print(f"Sequences: {self.model_manager.tokenizer.batch_decode(sequences, skip_special_tokens=False)}")
+            print(f"Sequences: {sequences}")
         #     scores = torch.stack(outputs.scores, dim=1)
         #     topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
 
