@@ -334,11 +334,12 @@ class Evaluator:
                     result = {
                         "sample_id": sample_id,
                         "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
-                        "prediction": self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=True),
+                        "prediction": self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False),
                         "label": labels[mini_batch_idx],
                         "token_ids": valid_new_tokens.tolist(),
                         "chosen_scores": valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist(),
                         "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
+                        "topk_tokens": self.model_manager.tokenizer.batch_decode(topk_ids[mini_batch_idx, :valid_length, :], skip_special_tokens=False),
                         "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
                     }
                     with open(result_path, "a", encoding="utf-8") as f:
