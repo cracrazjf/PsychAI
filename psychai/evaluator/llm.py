@@ -351,7 +351,8 @@ class Evaluator:
                     })
 
                     def _flush_buffer(buffer):
-                        _,_,vocab_size = buffer[0]["scores"].shape
+                        print(f"scores shape: {buffer[0]['scores'].shape}")
+                        _,vocab_size = buffer[0]["scores"].shape
                         shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
                         for i, row in enumerate(buffer):
                             shard[i, :row["valid_length"], :] = row["scores"]
