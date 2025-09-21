@@ -296,7 +296,7 @@ class Evaluator:
 
             # generate the outputs
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            print(f"input_ids: {batch['input_ids']}")
+            print(f"input_ids: {self.model_manager.tokenizer.batch_decode(batch['input_ids'], skip_special_tokens=False)}")
             outputs = self.model_manager.model.generate(**batch, 
                                                         # pad_token_id=self.model_manager.tokenizer.pad_token_id,
                                                         max_new_tokens = generate_args["max_new_tokens"], 
