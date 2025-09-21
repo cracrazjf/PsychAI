@@ -326,12 +326,9 @@ class Evaluator:
         #         # pred_texts.extend(predictions)
             elif data_type == "chat":
                 new_tokens = sequences[:, input_len:]
-                print(f"New tokens: {new_tokens}")
-                print(f"New tokens decoded: {self.model_manager.tokenizer.batch_decode(new_tokens, skip_special_tokens=False)}")
-                print("gen.eos_token_id :", self.model_manager.model.generation_config.eos_token_id)
-                print("gen.pad_token_id :", self.model_manager.model.generation_config.pad_token_id)
-                print("cfg.pad_token_id :", self.model_manager.model.config.pad_token_id)
-                valid_new_tokens_length = (new_tokens != pad_id).sum(dim=1)
+                end_of_text_id = self.model_manager.model.generation_config.eos_token_id
+                print(f"End of text id type: {type(end_of_text_id)}")
+                valid_new_tokens_length = (new_tokens != end_of_text_id).sum(dim=1)
 
         #         for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
         #             valid_tokens = new_tokens[mini_batch_idx, :valid_length]
