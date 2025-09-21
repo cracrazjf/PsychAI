@@ -300,7 +300,9 @@ class Evaluator:
                                                         top_k = generate_args["top_k"],
                                                         use_cache = True,
                                                         return_dict_in_generate=True,
-                                                        output_scores=True)
+                                                        output_scores=True,
+                                                        output_logits=True)
+            print(f"Outputs: {outputs.keys()}")
             
             # get corresponding scores and tokens
             sequences = outputs.sequences
@@ -330,7 +332,6 @@ class Evaluator:
                     valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
                     valid_scores = scores[mini_batch_idx, :valid_length, :]
                     max_valid_length = max(max_valid_length, valid_length)
-
                     result = {
                         "sample_id": sample_id,
                         "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
