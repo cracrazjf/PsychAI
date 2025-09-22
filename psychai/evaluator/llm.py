@@ -254,9 +254,7 @@ class Evaluator:
                          result_dir: str,
                          prompt_template: Optional[str] = None,
                          output_scores: bool = False,
-                         output_logits: bool = False,
-                         output_hidden_states: bool = False,
-                         output_attentions: bool = False,
+                         output_logits: bool = False
                          ):
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
@@ -264,10 +262,7 @@ class Evaluator:
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"results.jsonl"
-        print(f"Result path: {result_path}")
         open(result_path, "w").close()
-        manifest_path = result_dir / "manifest.jsonl"
-        open(manifest_path, "w").close()
         
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
@@ -381,9 +376,10 @@ class Evaluator:
                         shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
                         for i, row in enumerate(buffer):
                             shard[i, :row["valid_length"], :] = row[content_key]
-                        shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
+                        shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
                         np.savez_compressed(shard_path, shard.numpy())
 
+                        manifest_path = result_dir / f"{content_key}_manifest.jsonl"
                         with open(manifest_path, "w", encoding="utf-8") as f:
                             for i, row in enumerate(buffer):
                                 f.write(json.dumps({
@@ -392,7 +388,6 @@ class Evaluator:
                                     "valid_length": row["valid_length"],
                                     "row_idx": i,
                                 }) + "\n")
-
 
                     if len(buffer) >= 100:
                         if output_logits:
@@ -439,6 +434,32 @@ class Evaluator:
 
         _flush_buffer(buffer, "logits")
 
+    def evaluate_hidden_states(self,
+                              data: Any,
+                              batch_size: int,
+                              result_dir: str,
+                              output_hidden_states: bool = False,
+                              output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
+
+        def collate_for_activation(batch):
+            prompts = [ex["text"] for ex in batch]
+            enc = self.model_manager.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+            return enc
+        
+        loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_activation, pin_memory=True)
+
+        tqdm_loader = tqdm(loader, desc="Evaluating Activations")
+        for batch in tqdm_loader:
+            batch = {k: v.to(self.device) for k, v in batch.items()}
+            outputs = self.model_manager.model(**batch,
+                                                return_dict=True,
+                                                output_hidden_states=output_hidden_states,
+                                                output_attentions=output_attentions,
+                                                )
+            print(f"Outputs: {outputs.keys()}")
+            
+        
+
     def benchmark_text(
         self,
         model_name: str,
@@ -469,15 +490,21 @@ class Evaluator:
             result_dir = f"{result_dir}/{model_name}_{data_name}"
             if max_samples:
                 data = data.select(range(max_samples))
-            self.evaluate_outputs(data,
-                                  data_type,
-                                  batch_size=batch_size,
-                                  generate_args=generate_args,
-                                  result_dir=result_dir,
-                                  output_scores=output_scores,
-                                  output_logits=output_logits,
-                                  output_hidden_states=output_hidden_states,
-                                  output_attentions=output_attentions)
+            if output_hidden_states or output_attentions:
+                self.evaluate_hidden_states(data,
+                                            batch_size=batch_size,
+                                            result_dir=result_dir,
+                                            output_hidden_states=output_hidden_states,
+                                            output_attentions=output_attentions)
+            else:
+                self.evaluate_outputs(data,
+                                    data_type,
+                                    batch_size=batch_size,
+                                    generate_args=generate_args,
+                                    result_dir=result_dir,
+                                    output_scores=output_scores,
+                                    output_logits=output_logits,
+                                    )
 
 
     def interactive_text(self) -> None:
