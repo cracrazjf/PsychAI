@@ -432,13 +432,14 @@ class Evaluator:
 
         _flush_buffer(buffer, "logits")
 
-    def evaluate_hidden_states(self,
-                              data: Any,
-                              batch_size: int,
-                              layer: list[int],
-                              result_dir: str,
-                              output_hidden_states: bool = False,
-                              output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
+    def evaluate_plain_text(self,
+                            data: Any,
+                            batch_size: int,
+                            layer: list[int],
+                            result_dir: str,
+                            top_k: int = 50,
+                            output_hidden_states: bool = False,
+                            output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -453,33 +454,62 @@ class Evaluator:
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_activation, pin_memory=True)
 
         sample_id = 0
+        shard_id = 0
+        logits_buffer = []
         tqdm_loader = tqdm(loader, desc="Evaluating Activations")
         for batch in tqdm_loader:
             batch = {k: v.to(self.device) for k, v in batch.items()}
+            mask = batch["attention_mask"].bool()
+            input_ids = batch["input_ids"]
+
             outputs = self.model_manager.model(**batch,
                                                 return_dict=True,
                                                 output_logits=True,
                                                 output_hidden_states=output_hidden_states,
                                                 output_attentions=output_attentions,
                                                 )
-            logits = torch.stack(outputs.logits, dim=1)
-            print(f"logits: {logits.shape}")
-            print(f"hidden_states: {outputs.hidden_states.shape}")
-            print(f"attentions: {outputs.attentions.shape}")
-            mask = batch["attention_mask"].bool()
-            input_ids = batch["input_ids"]
+
+            logits = outputs.logits.masked_fill(~mask.unsqueeze(-1), -float("inf"))
+            print(f"Logits: {logits}")
+            topk_logits, topk_logits_ids = torch.topk(logits, k=top_k, dim=-1)
+
             for i, m in enumerate(mask):
                 result = {
                     "sample_id": sample_id,
                     "input_ids": input_ids[i][m].tolist(),
-                    "decoded_input": [self.model_manager.tokenizer.decode(id, skip_special_tokens=True) for id in input_ids[i][m]],
+                    "decoded_input": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in input_ids[i][m]],
+                    "topk_logits": topk_logits[i][m].tolist(),
+                    "topk_logits_ids": topk_logits_ids[i][m].tolist(),
+                    "topk_logits_tokens": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in topk_logits_ids[i][m]],
                 }
+                logits_buffer.append({"sample_id": sample_id, 
+                                      "logits": logits[i][m].detach().cpu().to(torch.float16).numpy()})
                 # for l in layer:
                 #     hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
                 #     result[f"layer_{l}"] = hidden_states.tolist()
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
+
+                def _flush_buffer(buffer, content_key):
+                    shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
+                    np.savez_compressed(shard_path, buffer[content_key])
+
+                    manifest_path = result_dir / f"{content_key}_manifest.jsonl"
+                    with open(manifest_path, "w", encoding="utf-8") as f:
+                        for i, row in enumerate(buffer):
+                            f.write(json.dumps({
+                                "sample_id": row["sample_id"],
+                                "shard_path": str(shard_path),
+                                "row_idx": i,
+                            }) + "\n")
+                
+                if len(logits_buffer) >= 667:
+                    _flush_buffer(logits_buffer, "logits")
+                    shard_id += 1
+                    logits_buffer = []
                 sample_id += 1
+                
+        _flush_buffer(logits_buffer, "logits")
 
 
     def benchmark_text(
@@ -514,10 +544,11 @@ class Evaluator:
             if max_samples:
                 data = data.select(range(max_samples))
             if output_hidden_states or output_attentions:
-                self.evaluate_hidden_states(data,
+                self.evaluate_plain_text(data,
                                             batch_size=batch_size,
                                             layer=layer,
                                             result_dir=result_dir,
+                                            top_k=generate_args["top_k"],
                                             output_hidden_states=output_hidden_states,
                                             output_attentions=output_attentions)
             else:
