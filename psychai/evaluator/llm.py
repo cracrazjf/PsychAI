@@ -253,6 +253,10 @@ class Evaluator:
                          generate_args: Dict[str, Any],
                          result_dir: str,
                          prompt_template: Optional[str] = None,
+                         output_scores: bool = False,
+                         output_logits: bool = False,
+                         output_hidden_states: bool = False,
+                         output_attentions: bool = False,
                          ):
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
@@ -283,7 +287,7 @@ class Evaluator:
         sample_id = 0
         shard_id = 0
         max_valid_length = 0
-        temp_full_scores = []
+        buffer = []
 
         tqdm_loader = tqdm(loader, desc="Evaluating")
         for batch in tqdm_loader:
@@ -300,32 +304,37 @@ class Evaluator:
                                                         top_k = generate_args["top_k"],
                                                         use_cache = True,
                                                         return_dict_in_generate=True,
-                                                        output_scores=True,
-                                                        output_logits=True)
+                                                        output_scores=output_scores,
+                                                        output_logits=output_logits,
+                                                        output_hidden_states=output_hidden_states,
+                                                        output_attentions=output_attentions,
+                                                        )
             print(f"Outputs: {outputs.keys()}")
             
             # get corresponding scores and tokens
             sequences = outputs.sequences
             # print(f"Sequences: {sequences}")
-            scores = torch.stack(outputs.scores, dim=1)
-            print(f"Scores: {scores.shape}")
-            logits = torch.stack(outputs.logits, dim=1)
-            print(f"Logits: {logits.shape}")
-            topk_scores, topk_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
-            topk_logits, _ = torch.topk(logits, k=generate_args["top_k"], dim=-1)
+            if output_scores:
+                scores = torch.stack(outputs.scores, dim=1)
+                topk_scores, topk_scores_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
+            if output_logits:
+                logits = torch.stack(outputs.logits, dim=1)
+                topk_logits, topk_logits_ids = torch.topk(logits, k=generate_args["top_k"], dim=-1)
+
+            topk_logits, topk_logits_ids = torch.topk(logits, k=generate_args["top_k"], dim=-1)
 
         #     # decide the input length
             input_len = batch["input_ids"].size(1)
 
             if data_type == "instruction":
                 pass
-        #         # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        #         # predictions = []
-        #         # for decoded_output in decoded_outputs:
-        #         #     head, sep, tail = decoded_output.rpartition("### Response:")
-        #         #     pred = (tail if sep else decoded_output).strip()
-        #         #     predictions.append(pred)
-        #         # pred_texts.extend(predictions)
+                # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                # predictions = []
+                # for decoded_output in decoded_outputs:
+                #     head, sep, tail = decoded_output.rpartition("### Response:")
+                #     pred = (tail if sep else decoded_output).strip()
+                #     predictions.append(pred)
+                # pred_texts.extend(predictions)
             elif data_type == "chat":
                 new_tokens = sequences[:, input_len:]
                 eos_ids = torch.tensor(self.model_manager.model.generation_config.eos_token_id, device=self.device)
@@ -334,33 +343,44 @@ class Evaluator:
 
                 for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
                     valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
-                    valid_scores = scores[mini_batch_idx, :valid_length, :]
                     max_valid_length = max(max_valid_length, valid_length)
+
                     result = {
                         "sample_id": sample_id,
                         "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
                         "prediction": self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False),
                         "label": labels[mini_batch_idx],
-                        "token_ids": valid_new_tokens.tolist(),
-                        "chosen_scores": valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist(),
-                        "topk_ids": topk_ids[mini_batch_idx, :valid_length, :].tolist(),
-                        "topk_tokens": self.model_manager.tokenizer.batch_decode(topk_ids[mini_batch_idx, :valid_length, :], skip_special_tokens=False),
-                        "topk_scores": topk_scores[mini_batch_idx, :valid_length, :].tolist(),
+                        "token_ids": valid_new_tokens.tolist()
+                        }
+
+                    temp_buffer = {
+                        "sample_id": sample_id,
+                        "valid_length": int(valid_length),
                     }
+
+                    if output_scores:
+                        valid_scores = scores[mini_batch_idx, :valid_length, :]
+                        result["chosen_scores"] = valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist()
+                        result["topk_scores_ids"] = topk_scores_ids[mini_batch_idx, :valid_length, :].tolist()
+                        result["topk_scores"] = topk_scores[mini_batch_idx, :valid_length, :].tolist()
+
+                    if output_logits:
+                        valid_logits = logits[mini_batch_idx, :valid_length, :]
+                        result["topk_logits_ids"] = topk_logits_ids[mini_batch_idx, :valid_length, :].tolist()
+                        result["topk_logits"] = topk_logits[mini_batch_idx, :valid_length, :].tolist()
+
+                        temp_buffer["logits"] = valid_logits.detach().cpu().to(torch.float16)
+
+                    buffer.append(temp_buffer)
+
                     with open(result_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    temp_full_scores.append({
-                        "sample_id": sample_id,
-                        "valid_length": int(valid_length),
-                        "scores": valid_scores.detach().cpu().to(torch.float16),
-                    })
-
-                    def _flush_buffer(buffer):
-                        _,vocab_size = buffer[0]["scores"].shape
+                    def _flush_buffer(buffer, content_key):
+                        _,vocab_size = buffer[0][content_key].shape
                         shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
                         for i, row in enumerate(buffer):
-                            shard[i, :row["valid_length"], :] = row["scores"]
+                            shard[i, :row["valid_length"], :] = row[content_key]
                         shard_path = result_dir / "scores_shard_{:05d}.fp16.npz".format(shard_id)
                         np.savez_compressed(shard_path, shard.numpy())
 
@@ -373,11 +393,13 @@ class Evaluator:
                                     "row_idx": i,
                                 }) + "\n")
 
-                    if len(temp_full_scores) >= 100:
-                        _flush_buffer(temp_full_scores)
+
+                    if len(buffer) >= 100:
+                        if output_logits:
+                            _flush_buffer(buffer, "logits")
                         shard_id += 1
                         max_valid_length = 0
-                        temp_full_scores = []
+                        buffer = []
 
                     sample_id += 1
 
@@ -415,7 +437,7 @@ class Evaluator:
         #         #     )
         #         #     pred_texts.extend(pred_text)
 
-        _flush_buffer(temp_full_scores)
+        _flush_buffer(buffer, "logits")
 
     def benchmark_text(
         self,
@@ -426,6 +448,10 @@ class Evaluator:
         data_type: str,
         batch_size: int,
         result_dir: str,
+        output_scores: bool = False,
+        output_logits: bool = False,
+        output_hidden_states: bool = False,
+        output_attentions: bool = False,
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None
@@ -447,7 +473,11 @@ class Evaluator:
                                   data_type,
                                   batch_size=batch_size,
                                   generate_args=generate_args,
-                                  result_dir=result_dir)
+                                  result_dir=result_dir,
+                                  output_scores=output_scores,
+                                  output_logits=output_logits,
+                                  output_hidden_states=output_hidden_states,
+                                  output_attentions=output_attentions)
 
 
     def interactive_text(self) -> None:
