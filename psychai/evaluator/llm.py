@@ -458,9 +458,13 @@ class Evaluator:
             batch = {k: v.to(self.device) for k, v in batch.items()}
             outputs = self.model_manager.model(**batch,
                                                 return_dict=True,
+                                                output_logits=True,
                                                 output_hidden_states=output_hidden_states,
                                                 output_attentions=output_attentions,
                                                 )
+            print(f"logits: {outputs.logits.shape}")
+            print(f"hidden_states: {outputs.hidden_states.shape}")
+            print(f"attentions: {outputs.attentions.shape}")
             mask = batch["attention_mask"].bool()
             input_ids = batch["input_ids"]
             for i, m in enumerate(mask):
