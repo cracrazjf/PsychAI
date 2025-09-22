@@ -437,6 +437,7 @@ class Evaluator:
     def evaluate_hidden_states(self,
                               data: Any,
                               batch_size: int,
+                              layer: list[int],
                               result_dir: str,
                               output_hidden_states: bool = False,
                               output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
@@ -458,6 +459,7 @@ class Evaluator:
                                                 )
             print(f"Outputs: {outputs.keys()}")
             print(f"Input: {batch['input_ids'].shape}")
+            print(f"Mask: {batch['attention_mask'].shape}")
             print(f"Last Hidden States: {outputs.hidden_states[-1].shape}")
             
         
