@@ -475,6 +475,7 @@ class Evaluator:
         result_dir: str,
         output_scores: bool = False,
         output_logits: bool = False,
+        layer: list[int] = None,
         output_hidden_states: bool = False,
         output_attentions: bool = False,
         max_samples: Optional[int] = None,
@@ -497,6 +498,7 @@ class Evaluator:
             if output_hidden_states or output_attentions:
                 self.evaluate_hidden_states(data,
                                             batch_size=batch_size,
+                                            layer=layer,
                                             result_dir=result_dir,
                                             output_hidden_states=output_hidden_states,
                                             output_attentions=output_attentions)
