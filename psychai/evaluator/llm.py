@@ -307,7 +307,7 @@ class Evaluator:
                                                         output_scores=output_scores,
                                                         output_logits=output_logits,
                                                         output_hidden_states=output_hidden_states,
-                                                        output_attentions=output_attentions,
+                                                        # output_attentions=output_attentions,
                                                         )
             print(f"Outputs: {outputs.keys()}")
             
