@@ -300,9 +300,7 @@ class Evaluator:
                                                         use_cache = True,
                                                         return_dict_in_generate=True,
                                                         output_scores=output_scores,
-                                                        output_logits=output_logits,
-                                                        output_hidden_states=output_hidden_states,
-                                                        # output_attentions=output_attentions,
+                                                        output_logits=output_logits
                                                         )
             print(f"Outputs: {outputs.keys()}")
             
@@ -442,6 +440,11 @@ class Evaluator:
                               output_hidden_states: bool = False,
                               output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
 
+        result_dir = Path(result_dir)
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / f"hidden_states.jsonl"
+        open(result_path, "w").close()
+
         def collate_for_activation(batch):
             prompts = [ex["text"] for ex in batch]
             enc = self.model_manager.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
@@ -449,6 +452,7 @@ class Evaluator:
         
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_activation, pin_memory=True)
 
+        sample_id = 0
         tqdm_loader = tqdm(loader, desc="Evaluating Activations")
         for batch in tqdm_loader:
             batch = {k: v.to(self.device) for k, v in batch.items()}
@@ -457,13 +461,20 @@ class Evaluator:
                                                 output_hidden_states=output_hidden_states,
                                                 output_attentions=output_attentions,
                                                 )
-            mask = batch["attention_mask"]
-            selected_hidden_layers = [outputs.hidden_states[l] for l in layer]
-            last_idx = mask.int().sum(dim=1) - 1
-            last_vecs = [x[torch.arange(x.size(0)), last_idx] for x in selected_hidden_layers]
-            for i, vec in enumerate(last_vecs):
-                print(f"Layer {layer[i]}: {vec.shape}")
-        
+            mask = batch["attention_mask"].bool()
+            input_ids = batch["input_ids"].cpu()
+            for i, m in enumerate(mask):
+                result = {
+                    "sample_id": sample_id,
+                    "input_ids": input_ids[i][m].tolist(),
+                }
+                for l in layer:
+                    hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
+                    result[f"layer_{l}"] = hidden_states.tolist()
+                with open(result_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                sample_id += 1
+
 
     def benchmark_text(
         self,
