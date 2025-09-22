@@ -457,6 +457,7 @@ class Evaluator:
                                                 output_attentions=output_attentions,
                                                 )
             print(f"Outputs: {outputs.keys()}")
+            print(f"Input: {batch['input_ids'].shape}")
             print(f"Last Hidden States: {outputs.hidden_states[-1].shape}")
             
         
