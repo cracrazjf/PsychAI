@@ -484,7 +484,7 @@ class Evaluator:
                     "topk_logits_tokens": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in topk_logits_ids[i][m]],
                 }
                 logits_buffer.append({"sample_id": sample_id, 
-                                      "logits": logits[i][m].detach().cpu().to(torch.float16).numpy(),
+                                      "logits": logits[i][m].detach().cpu().to(torch.float16),
                                       "valid_length": m.sum()})
                 # for l in layer:
                 #     hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
@@ -498,7 +498,7 @@ class Evaluator:
                     for i, row in enumerate(buffer):
                         shard[i, :row["valid_length"], :] = row[content_key]
                     shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
-                    np.savez_compressed(shard_path, shard)
+                    np.savez_compressed(shard_path, shard.numpy())
 
                     manifest_path = result_dir / f"{content_key}_manifest.jsonl"
                     with open(manifest_path, "w", encoding="utf-8") as f:
