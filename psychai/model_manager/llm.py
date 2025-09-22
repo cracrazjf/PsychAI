@@ -223,7 +223,8 @@ def load_model_unsloth(
     )
     
     if not for_training:
-        FastLanguageModel.for_inference(model)
+        # FastLanguageModel.for_inference(model)
+        model.eval()
     
     return model, tokenizer
 
