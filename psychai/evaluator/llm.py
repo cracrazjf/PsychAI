@@ -462,7 +462,7 @@ class Evaluator:
                                                 output_attentions=output_attentions,
                                                 )
             mask = batch["attention_mask"].bool()
-            input_ids = batch["input_ids"].cpu()
+            input_ids = batch["input_ids"]
             for i, m in enumerate(mask):
                 result = {
                     "sample_id": sample_id,
