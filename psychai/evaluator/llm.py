@@ -460,6 +460,7 @@ class Evaluator:
             print(f"Outputs: {outputs.keys()}")
             print(f"Input: {batch['input_ids'].shape}")
             print(f"Mask: {batch['attention_mask'].shape}")
+            print(f"Hidden States: {outputs.hidden_states.shape}")
             print(f"Last Hidden States: {outputs.hidden_states[-1].shape}")
             
         
@@ -514,7 +515,6 @@ class Evaluator:
 
 
     def interactive_text(self) -> None:
-        """Simple REPL for chatting, switching models, benchmark and compare."""
         models = self.list_available_models()
         datasets = self.list_available_datasets()
 
