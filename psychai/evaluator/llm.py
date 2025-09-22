@@ -457,12 +457,12 @@ class Evaluator:
                                                 output_hidden_states=output_hidden_states,
                                                 output_attentions=output_attentions,
                                                 )
-            print(f"Outputs: {outputs.keys()}")
-            print(f"Input: {batch['input_ids'].shape}")
-            print(f"Mask: {batch['attention_mask'].shape}")
-            print(f"Hidden States: {outputs.hidden_states.shape}")
-            print(f"Last Hidden States: {outputs.hidden_states[-1].shape}")
-            
+            mask = batch["attention_mask"]
+            selected_hidden_layers = [outputs.hidden_states[l] for l in layer]
+            last_idx = mask.int().sum(dim=1) - 1
+            last_vecs = [x[torch.arange(x.size(0)), last_idx] for x in selected_hidden_layers]
+            for i, vec in enumerate(last_vecs):
+                print(f"Layer {layer[i]}: {vec.shape}")
         
 
     def benchmark_text(
