@@ -462,7 +462,8 @@ class Evaluator:
                                                 output_hidden_states=output_hidden_states,
                                                 output_attentions=output_attentions,
                                                 )
-            print(f"logits: {outputs.logits.shape}")
+            logits = torch.stack(outputs.logits, dim=1)
+            print(f"logits: {logits.shape}")
             print(f"hidden_states: {outputs.hidden_states.shape}")
             print(f"attentions: {outputs.attentions.shape}")
             mask = batch["attention_mask"].bool()
