@@ -491,8 +491,9 @@ class Evaluator:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
                 def _flush_buffer(buffer, content_key):
+                    shard = np.stack([row[content_key] for row in buffer])
                     shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
-                    np.savez_compressed(shard_path, buffer[content_key])
+                    np.savez_compressed(shard_path, shard)
 
                     manifest_path = result_dir / f"{content_key}_manifest.jsonl"
                     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -508,7 +509,7 @@ class Evaluator:
                     shard_id += 1
                     logits_buffer = []
                 sample_id += 1
-                
+
         _flush_buffer(logits_buffer, "logits")
 
 
