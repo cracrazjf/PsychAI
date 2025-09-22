@@ -467,10 +467,11 @@ class Evaluator:
                 result = {
                     "sample_id": sample_id,
                     "input_ids": input_ids[i][m].tolist(),
+                    "decoded_input": [self.model_manager.tokenizer.decode(id, skip_special_tokens=True) for id in input_ids[i][m]],
                 }
-                for l in layer:
-                    hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
-                    result[f"layer_{l}"] = hidden_states.tolist()
+                # for l in layer:
+                #     hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
+                #     result[f"layer_{l}"] = hidden_states.tolist()
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
                 sample_id += 1
