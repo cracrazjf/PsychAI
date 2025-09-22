@@ -455,6 +455,7 @@ class Evaluator:
 
         sample_id = 0
         shard_id = 0
+        max_seq_length = 0
         logits_buffer = []
         tqdm_loader = tqdm(loader, desc="Evaluating Activations")
         for batch in tqdm_loader:
@@ -469,11 +470,11 @@ class Evaluator:
                                                 output_attentions=output_attentions,
                                                 )
 
-            logits = outputs.logits.masked_fill(~mask.unsqueeze(-1), -float("inf"))
-            print(f"Logits: {logits}")
+            logits = outputs.logits
             topk_logits, topk_logits_ids = torch.topk(logits, k=top_k, dim=-1)
 
             for i, m in enumerate(mask):
+                max_seq_length = max(max_seq_length, m.sum())
                 result = {
                     "sample_id": sample_id,
                     "input_ids": input_ids[i][m].tolist(),
@@ -483,15 +484,19 @@ class Evaluator:
                     "topk_logits_tokens": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in topk_logits_ids[i][m]],
                 }
                 logits_buffer.append({"sample_id": sample_id, 
-                                      "logits": logits[i][m].detach().cpu().to(torch.float16).numpy()})
+                                      "logits": logits[i][m].detach().cpu().to(torch.float16).numpy(),
+                                      "valid_length": m.sum()})
                 # for l in layer:
                 #     hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
                 #     result[f"layer_{l}"] = hidden_states.tolist()
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                def _flush_buffer(buffer, content_key):
-                    shard = np.stack([row[content_key] for row in buffer])
+                def _flush_buffer(buffer, content_key, max_length):
+                    _,vocab_size = buffer[0][content_key].shape
+                    shard = torch.full((len(buffer), max_length, vocab_size), -float("inf"), dtype=torch.float16)
+                    for i, row in enumerate(buffer):
+                        shard[i, :row["valid_length"], :] = row[content_key]
                     shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
                     np.savez_compressed(shard_path, shard)
 
@@ -505,12 +510,13 @@ class Evaluator:
                             }) + "\n")
                 
                 if len(logits_buffer) >= 667:
-                    _flush_buffer(logits_buffer, "logits")
+                    _flush_buffer(logits_buffer, "logits", max_seq_length)
                     shard_id += 1
+                    max_seq_length = 0
                     logits_buffer = []
                 sample_id += 1
 
-        _flush_buffer(logits_buffer, "logits")
+        _flush_buffer(logits_buffer, "logits", max_seq_length)
 
 
     def benchmark_text(
