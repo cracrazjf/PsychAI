@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import numpy as np
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Optional, TextIO
 
@@ -114,3 +115,12 @@ def read_json(
         yield data
     else:
         raise ValueError(f"Top-level value in {path} must be an object or array of objects (got {type(data).__name__}).")
+
+def read_npz(
+    path: str | Path,
+    *,
+    allow_pickle: bool = False,
+) -> Dict:
+    with np.load(path, allow_pickle=allow_pickle) as z:
+        print(f"Contents of {path}: {z.files}")
+        return {k: z[k] for k in z.files}

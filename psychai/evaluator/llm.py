@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import json
-import ast
+import numpy as np
 from tqdm import tqdm
 import threading
 from pathlib import Path
@@ -392,10 +392,12 @@ class Evaluator:
                     heavy_result = {
                         "sample_id": sample_id,
                         "last_logits": logits[i][last_valid_index].cpu().to(torch.float16),
+                        "last_token": int(input_ids[i][last_valid_index]),
                     }
                     if output_hidden_states:
                         heavy_result["last_hiddens"] = torch.stack([outputs.hidden_states[l][i][last_valid_index] for l in layer], dim=0).cpu().to(torch.float16)
                         heavy_result["second_last_hiddens"] = torch.stack([outputs.hidden_states[l][i][last_valid_index - 1] for l in layer], dim=0).cpu().to(torch.float16)
+                        heavy_result["third_last_hiddens"] = torch.stack([outputs.hidden_states[l][i][last_valid_index - 2] for l in layer], dim=0).cpu().to(torch.float16)
                     heavy_results.append(heavy_result)
 
 
@@ -407,16 +409,21 @@ class Evaluator:
                         logits_shard = np.empty((N, V), dtype=np.float16)
                         last_hiddens_shard = np.empty((N, L, H), dtype=np.float16) if output_hidden_states else None
                         second_last_hiddens_shard = np.empty((N, L, H), dtype=np.float16) if output_hidden_states else None
+                        third_last_hiddens_shard = np.empty((N, L, H), dtype=np.float16) if output_hidden_states else None
                         sids = []
+                        last_tokens = []
 
                         for i, row in enumerate(buffer):
                             logits_shard[i] = row["last_logits"].numpy()
                             if output_hidden_states:
                                 last_hiddens_shard[i] = row["last_hiddens"].numpy()
                                 second_last_hiddens_shard[i] = row["second_last_hiddens"].numpy()
+                                third_last_hiddens_shard[i] = row["third_last_hiddens"].numpy()
                             sids.append(row["sample_id"])
+                            last_tokens.append(row["last_token"])
 
                         sample_ids = np.array(sids, dtype=np.int32)
+                        last_tokens = np.array(last_tokens, dtype=np.int32)
 
                         shard_path = result_dir / "heavy_results_shard_{:05d}.fp16.npz".format(shard_id)
                         if output_hidden_states:
@@ -424,7 +431,9 @@ class Evaluator:
                                                 logits=logits_shard,
                                                 last_hiddens=last_hiddens_shard,
                                                 second_last_hiddens=second_last_hiddens_shard,
+                                                third_last_hiddens=third_last_hiddens_shard,
                                                 sample_ids=sample_ids,
+                                                last_tokens=last_tokens,
                                                 vocab_size=np.array([V], dtype=np.int32),
                                                 num_layers=np.array([L], dtype=np.int32),
                                                 hidden_size=np.array([H], dtype=np.int32))
@@ -432,6 +441,7 @@ class Evaluator:
                             np.savez_compressed(shard_path,
                                                 logits=logits_shard,
                                                 sample_ids=sample_ids,
+                                                last_tokens=last_tokens,
                                                 vocab_size=np.array([V], dtype=np.int32))
                     
                     if len(heavy_results) >= 667:
@@ -458,7 +468,6 @@ class Evaluator:
         generate_args: Optional[Dict[str, Any]] = None,
         prompt_template: Optional[str] = None
     ):
-
         self.load_model_and_tokenizer(model_name, 
                                       model_path, 
                                       reasoning, 
