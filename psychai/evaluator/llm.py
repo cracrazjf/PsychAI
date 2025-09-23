@@ -422,8 +422,8 @@ class Evaluator:
                     sids = []
 
                     for i, row in enumerate(buffer):
-                        logits_shard[i] = row["last_logits"].astype(np.float16, copy=False)
-                        hiddens_shard[i] = row["last_hiddens"].astype(np.float16, copy=False)
+                        logits_shard[i] = row["last_logits"].numpy()
+                        hiddens_shard[i] = row["last_hiddens"].numpy()
                         sids.append(row["sample_id"])
 
                     sample_ids = np.array(sids, dtype=f"<U{max(map(len, sids))}")
