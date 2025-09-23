@@ -464,7 +464,9 @@ class Evaluator:
         output_hidden_states: bool = False,
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
-        generate_args: Optional[Dict[str, Any]] = None
+        generate_args: Optional[Dict[str, Any]] = None,
+        prompt_template: Optional[str] = None
+
     ) -> Dict[str, Dict[str, Optional[float]]]:
 
         self.load_model_and_tokenizer(model_name, 
