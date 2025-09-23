@@ -91,10 +91,11 @@ def load_any_as_chat(
             else:
                 raise ValueError(f"Invalid stype: {stype}, must be 'labeled' or 'natural'")
 
-            if output_key and output_wrapper:
-                output_text = output_wrapper(row[output_key])
-            else:
-                output_text = row[output_key]
+            if output_key:
+                if output_wrapper:
+                    output_text = output_wrapper(row[output_key])
+                else:
+                    output_text = row[output_key]
             else:
                 output_text = ""
 
