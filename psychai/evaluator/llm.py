@@ -257,7 +257,7 @@ class Evaluator:
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
-        result_path = result_dir / f"results.jsonl"
+        result_path = result_dir / f"{data_type}_formatted_results.jsonl"   
         open(result_path, "w").close()
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
@@ -351,12 +351,11 @@ class Evaluator:
                             result_dir: str,
                             layer: list[int]= [-1],
                             top_k: int = 50,
-                            output_hidden_states: bool = False,
-                            output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
+                            output_hidden_states: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
-        result_path = result_dir / f"results.jsonl"
+        result_path = result_dir / f"plain_text_results.jsonl"
         open(result_path, "w").close()
 
         def collate_for_activation(batch):
@@ -377,8 +376,7 @@ class Evaluator:
             outputs = self.model_manager.model(**batch,
                                                 return_dict=True,
                                                 output_logits=True,
-                                                output_hidden_states=output_hidden_states,
-                                                output_attentions=output_attentions,
+                                                output_hidden_states=output_hidden_states
                                                 )
 
             mask = batch["attention_mask"].bool()
@@ -475,7 +473,7 @@ class Evaluator:
             if max_samples:
                 data = data.select(range(max_samples))
             result_dir = f"{result_dir}/{model_name}_{data_name}"
-            
+
             if data_type == "plain":
                 self.evaluate_plain_text(data,
                                         batch_size=batch_size,
