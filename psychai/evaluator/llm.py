@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from functools import partial
 from ..model_manager.llm import LLM_ModelManager
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 import torch
 import numpy as np
 from datasets import load_dataset
@@ -66,19 +66,10 @@ class Evaluator:
     def list_available_datasets(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         base_path = Path(self.data_root)
-        if not base_path.exists():
-            return out
-        for item in base_path.iterdir():
-            if item.is_dir():
-                for root, dirs, files in os.walk(item):
-                    for dir in dirs:
-                        if "processed" in dir:
-                            processed_path = Path(root) / dir
-                            test_json: Optional[str] = None
-                            for j in processed_path.glob("test*.json*"):
-                                test_json = str(j)
-                                break
-                            out[item.name] = test_json
+        for root, dirs, files in os.walk(base_path):
+            for file in files:
+                if file.endswith(".jsonl"):
+                    out[file.split(".")[0]] = str(Path(root) / file)
         return dict(sorted(out.items()))
 
     def format_chat(self, examples: Any, reasoning_effort: Optional[str] = None) -> dict:
@@ -466,8 +457,7 @@ class Evaluator:
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None,
         prompt_template: Optional[str] = None
-
-    ) -> Dict[str, Dict[str, Optional[float]]]:
+    ):
 
         self.load_model_and_tokenizer(model_name, 
                                       model_path, 
@@ -642,7 +632,9 @@ class Evaluator:
 
             if user == "evaluate":
                 print("You've entered the evaluate mode.")
-
+                
+                print("Here are the available models:")
+                print("\n".join(models.keys()) or "(none)")
                 model_name = input("Please enter the model name: ").strip()
                 model_path = models.get(model_name, model_name)
                 reasoning, model_args = _get_model_args()
@@ -651,7 +643,11 @@ class Evaluator:
                 print("\n".join(datasets.keys()) or "(none)")
                 print("if you don't see the data you want, you can enter the data path directly")
                 data_name = input("Please enter the data name: ").strip()
-                data_path = input("Please enter the data path: ").strip()
+                if data_name not in datasets:
+                    data_path = input("Please enter the data path: ").strip()
+                else:
+                    data_path = datasets[data_name]
+                data_map = {data_name: data_path}
                 data_type = input("Please enter the data format(chat/instruction/plain): ").strip()
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
@@ -675,45 +671,20 @@ class Evaluator:
                         layer = [int(l) for l in layer.split(",")]
                     else:
                         layer = [-1]
-                else:
-                    generate_args = _get_generate_args(reasoning)
-                    while True:
-                        output_scores = input("Please enter whether to output scores(True/False): ").strip()
-                        if output_scores in ("true", "1", "yes"):
-                            output_scores = True
-                            break
-                        elif output_scores in ("false", "0", "no"):
-                            output_scores = False
-                            break
-                        else:
-                            print("⚠️ Please enter 'True' or 'False'.")
-
-                    while True:
-                        output_logits = input("Please enter whether to output logits(True/False): ").strip()
-                        if output_logits in ("true", "1", "yes"):
-                            output_logits = True
-                            break
-                        elif output_logits in ("false", "0", "no"):
-                            output_logits = False
-                            break
-                        else:
-                            print("⚠️ Please enter 'True' or 'False'.")
 
                 print(f"Will start evaluating {model_name} on {data_name}...")
 
                 self.evaluate_text(model_name, 
                                     model_path,
                                     reasoning, 
-                                    data_name, 
-                                    data_path, 
+                                    data_map, 
                                     data_type,
                                     result_dir=result_dir,
                                     max_samples=max_samples,
                                     batch_size=batch_size,
                                     model_args=model_args,
                                     generate_args=generate_args,
-                                    output_scores=output_scores,
-                                    output_logits=output_logits,
+                                    prompt_template=prompt_template,
                                     layer=layer,
                                     output_hidden_states=output_hidden_states)
                 continue
