@@ -658,6 +658,7 @@ class Evaluator:
                 layer = [-1]
                 generate_args = None
                 prompt_template = None
+                output_hidden_states = False
                 if data_type == "plain":
                     while True:
                         output_hidden_states = input("Please enter whether to output hidden states(True/False): ").strip()
