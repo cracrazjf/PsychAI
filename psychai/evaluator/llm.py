@@ -656,6 +656,7 @@ class Evaluator:
                 result_dir = input("Where do you want to save the results: ").strip()
 
                 if data_type == "plain":
+                    generate_args = None
                     while True:
                         output_hidden_states = input("Please enter whether to output hidden states(True/False): ").strip()
                         if output_hidden_states in ("true", "1", "yes"):
@@ -671,6 +672,12 @@ class Evaluator:
                         layer = [int(l) for l in layer.split(",")]
                     else:
                         layer = [-1]
+                else:
+                    generate_args = _get_generate_args(reasoning)
+                    if data_type == "instruction":
+                        prompt_template = input("Please enter the prompt template: ").strip()
+                    else:
+                        prompt_template = None
 
                 print(f"Will start evaluating {model_name} on {data_name}...")
 
