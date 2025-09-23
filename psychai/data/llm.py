@@ -51,8 +51,8 @@ def convert_to_instruction_format(
 def load_any_as_chat(
     file_path: str,
     input_key: str = "input",
-    output_key: str = "output",
     *,
+    output_key: Optional[str] = "output",
     system_prompt: Optional[str] = None,
     question: Optional[str] = None,
     constraint: Optional[str] = None,
@@ -71,7 +71,7 @@ def load_any_as_chat(
         raise ValueError(f"Invalid file type: {file_type}")
 
     for row in row_dicts:
-        if row[input_key] and row[output_key]:
+        if row[input_key]:
             if clean_function:
                 input_text = clean_function(row[input_key])
             else:
@@ -91,10 +91,12 @@ def load_any_as_chat(
             else:
                 raise ValueError(f"Invalid stype: {stype}, must be 'labeled' or 'natural'")
 
-            if output_wrapper:
+            if output_key and output_wrapper:
                 output_text = output_wrapper(row[output_key])
             else:
                 output_text = row[output_key]
+            else:
+                output_text = ""
 
             conversation = convert_to_chat_format(
                 str(input_text),
