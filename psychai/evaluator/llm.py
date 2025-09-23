@@ -251,14 +251,11 @@ class Evaluator:
                                 data_type: str,
                                 batch_size: int,
                                 generate_args: Dict[str, Any],
-                                result_dir: str,
+                                result_dir: Path,
                                 prompt_template: Optional[str] = None
                                 ):
 
-        result_dir = Path(result_dir)
-        result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"{data_type}_formatted_results.jsonl"   
-        open(result_path, "w").close()
 
         reasoning_effort = generate_args.get("reasoning_effort", None)
         if data_type == "chat":
@@ -277,86 +274,84 @@ class Evaluator:
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
 
         sample_id = 0
-        tqdm_loader = tqdm(loader, desc="Evaluating Formatted Text")
-        for batch in tqdm_loader:
-            # store the labels
-            labels = batch.pop("labels")  
+        with open(result_path, "w", encoding="utf-8") as f:
+            tqdm_loader = tqdm(loader, desc="Evaluating Formatted Text")
+            for batch in tqdm_loader:
+                # store the labels
+                labels = batch.pop("labels")  
 
-            # generate the outputs
-            batch = {k: v.to(self.device) for k, v in batch.items()}
-            outputs = self.model_manager.model.generate(**batch,
-                                                        max_new_tokens = generate_args["max_new_tokens"], 
-                                                        temperature = generate_args["temperature"],
-                                                        do_sample = generate_args["do_sample"],
-                                                        top_p = generate_args["top_p"],
-                                                        top_k = generate_args["top_k"],
-                                                        use_cache = True,
-                                                        return_dict_in_generate=True
-                                                        )
-            
-            # get corresponding scores and tokens
-            sequences = outputs.sequences
-            # decide the input length
-            input_len = batch["input_ids"].size(1)
+                # generate the outputs
+                batch = {k: v.to(self.device) for k, v in batch.items()}
+                with torch.inference_mode():
+                    outputs = self.model_manager.model.generate(**batch,
+                                                                max_new_tokens = generate_args["max_new_tokens"], 
+                                                                temperature = generate_args["temperature"],
+                                                                do_sample = generate_args["do_sample"],
+                                                                top_p = generate_args["top_p"],
+                                                                top_k = generate_args["top_k"],
+                                                                use_cache = True,
+                                                                return_dict_in_generate=True
+                                                                )
+                
+                # get corresponding scores and tokens
+                sequences = outputs.sequences
+                # decide the input length
+                input_len = batch["input_ids"].size(1)
 
-            if data_type == "instruction":
-                pass
-                # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                # predictions = []
-                # for decoded_output in decoded_outputs:
-                #     head, sep, tail = decoded_output.rpartition("### Response:")
-                #     pred = (tail if sep else decoded_output).strip()
-                #     predictions.append(pred)
-                # pred_texts.extend(predictions)
-            elif data_type == "chat":
-                new_tokens = sequences[:, input_len:]
-                eos_ids = torch.tensor(self.model_manager.model.generation_config.eos_token_id, device=self.device)
-                valid_new_tokens_mask = ~torch.isin(new_tokens, eos_ids)
-                valid_new_tokens_length = valid_new_tokens_mask.sum(dim=1)
+                if data_type == "instruction":
+                    pass
+                    # decoded_outputs = self.model_manager.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                    # predictions = []
+                    # for decoded_output in decoded_outputs:
+                    #     head, sep, tail = decoded_output.rpartition("### Response:")
+                    #     pred = (tail if sep else decoded_output).strip()
+                    #     predictions.append(pred)
+                    # pred_texts.extend(predictions)
+                elif data_type == "chat":
+                    new_tokens = sequences[:, input_len:]
+                    eos_ids = torch.tensor(self.model_manager.model.generation_config.eos_token_id, device=self.device)
+                    valid_new_tokens_mask = ~torch.isin(new_tokens, eos_ids)
+                    valid_new_tokens_length = valid_new_tokens_mask.sum(dim=1)
 
-                for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
-                    valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
-                    if self.model_manager.reasoning:
-                        decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False)
-                    else:
-                        decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=True)
+                    for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
+                        valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
+                        if self.model_manager.reasoning:
+                            decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False)
+                        else:
+                            decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=True)
 
-                    result = {
-                        "sample_id": sample_id,
-                        "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
-                        "decoded_tokens": decoded_valid_new_tokens,
-                        "label": labels[mini_batch_idx],
-                        "token_ids": valid_new_tokens.tolist()
-                        }
+                        result = {
+                            "sample_id": sample_id,
+                            "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
+                            "decoded_tokens": decoded_valid_new_tokens,
+                            "label": labels[mini_batch_idx],
+                            "token_ids": valid_new_tokens.tolist()
+                            }
 
-                    if self.model_manager.reasoning:
-                        analysis_re, final_re = self.get_analysis_and_final_re()
-                        ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
-                        FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
-                        analysis_match = ANALYSIS_RE.search(decoded_valid_new_tokens)
-                        final_match = FINAL_RE.search(decoded_valid_new_tokens)
-                        if analysis_match:
-                            result["analysis"] = analysis_match.group(1).strip()
-                        if final_match:
-                            result["final"] = final_match.group(1).strip()
+                        if self.model_manager.reasoning:
+                            analysis_re, final_re = self.get_analysis_and_final_re()
+                            ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
+                            FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
+                            analysis_match = ANALYSIS_RE.search(decoded_valid_new_tokens)
+                            final_match = FINAL_RE.search(decoded_valid_new_tokens)
+                            if analysis_match:
+                                result["analysis"] = analysis_match.group(1).strip()
+                            if final_match:
+                                result["final"] = final_match.group(1).strip()
 
-                    with open(result_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    sample_id += 1
+                        sample_id += 1
 
     def evaluate_plain_text(self,
                             data: Any,
                             batch_size: int,
-                            result_dir: str,
+                            result_dir: Path,
                             layer: list[int]= [-1],
                             top_k: int = 50,
                             output_hidden_states: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
 
-        result_dir = Path(result_dir)
-        result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"plain_text_results.jsonl"
-        open(result_path, "w").close()
 
         def collate_for_activation(batch):
             prompts = [ex["text"] for ex in batch]
@@ -367,83 +362,94 @@ class Evaluator:
 
         sample_id = 0
         shard_id = 0
-        results = []
         heavy_results = []
-        tqdm_loader = tqdm(loader, desc="Evaluating Plain Text")
-        for batch in tqdm_loader:
-            batch = {k: v.to(self.device) for k, v in batch.items()}
+        with open(result_path, "w", encoding="utf-8") as f:
+            tqdm_loader = tqdm(loader, desc="Evaluating Plain Text")
+            for batch in tqdm_loader:
+                batch = {k: v.to(self.device) for k, v in batch.items()}
 
-            outputs = self.model_manager.model(**batch,
-                                                return_dict=True,
-                                                output_logits=True,
-                                                output_hidden_states=output_hidden_states
-                                                )
+                with torch.inference_mode():
+                    outputs = self.model_manager.model(**batch,
+                                                        return_dict=True,
+                                                        output_logits=True,
+                                                        output_hidden_states=output_hidden_states
+                                                        )
 
-            mask = batch["attention_mask"].bool()
-            input_ids = batch["input_ids"]
-            logits = outputs.logits
-            topk_logits, topk_logits_ids = torch.topk(logits, k=top_k, dim=-1)
+                mask = batch["attention_mask"].bool()
+                input_ids = batch["input_ids"]
+                logits = outputs.logits
+                topk_logits, topk_logits_ids = torch.topk(logits, k=top_k, dim=-1)
 
-            for i, m in enumerate(mask):
-                shift_label_ids = input_ids[i][m][1:]
-                shift_logits = logits[i][m][:-1, :]
-                chosen_logits = shift_logits.gather(1, shift_label_ids.unsqueeze(1)).squeeze(1)
-                last_valid_index = int(m.sum().item() - 1)
+                for i, m in enumerate(mask):
+                    shift_label_ids = input_ids[i][m][1:]
+                    shift_logits = logits[i][m][:-1, :]
+                    chosen_logits = shift_logits.gather(1, shift_label_ids.unsqueeze(1)).squeeze(1)
+                    last_valid_index = int(m.sum().item() - 1)
 
-                result = {
-                    "sample_id": sample_id,
-                    "input_ids": input_ids[i][m].tolist(),
-                    "decoded_input": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in input_ids[i][m]],
-                    "label": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in shift_label_ids],
-                    "chosen_logits": chosen_logits.tolist(),
-                    "topk_logits": topk_logits[i][m].tolist(),
-                    "topk_logits_ids": topk_logits_ids[i][m].tolist(),
-                }
+                    result = {
+                        "sample_id": sample_id,
+                        "input_ids": input_ids[i][m].tolist(),
+                        "decoded_input": self.model_manager.tokenizer.convert_ids_to_tokens(input_ids[i][m]),
+                        "label": self.model_manager.tokenizer.convert_ids_to_tokens(shift_label_ids),
+                        "chosen_logits": chosen_logits.tolist(),
+                        "topk_logits": topk_logits[i][m].tolist(),
+                        "topk_logits_ids": topk_logits_ids[i][m].tolist(),
+                    }
 
-                heavy_result = {
-                    "sample_id": sample_id,
-                    "last_logits": logits[i][last_valid_index].detach().cpu().to(torch.float16),
-                    "last_hiddens": torch.stack([outputs.hidden_states[l][i][last_valid_index] for l in layer], dim=0).detach().cpu().to(torch.float16)
-                }
-                
-                results.append(result)
-                heavy_results.append(heavy_result)
-
-                with open(result_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                def _flush_buffer(buffer):
-                    V = buffer[0]["last_logits"].shape[0]
-                    L, H = buffer[0]["last_hiddens"].shape
-                    N = len(buffer)
+                    heavy_result = {
+                        "sample_id": sample_id,
+                        "last_logits": logits[i][last_valid_index].cpu().to(torch.float16),
+                    }
+                    if output_hidden_states:
+                        heavy_result["last_hiddens"] = torch.stack([outputs.hidden_states[l][i][last_valid_index] for l in layer], dim=0).cpu().to(torch.float16)
+                        heavy_result["second_last_hiddens"] = torch.stack([outputs.hidden_states[l][i][last_valid_index - 1] for l in layer], dim=0).cpu().to(torch.float16)
+                    heavy_results.append(heavy_result)
 
-                    logits_shard = np.empty((N, V), dtype=np.float16)
-                    hiddens_shard = np.empty((N, L, H), dtype=np.float16)
-                    sids = []
 
-                    for i, row in enumerate(buffer):
-                        logits_shard[i] = row["last_logits"].numpy()
-                        hiddens_shard[i] = row["last_hiddens"].numpy()
-                        sids.append(row["sample_id"])
+                    def _flush_buffer(buffer):
+                        V = buffer[0]["last_logits"].shape[0]
+                        L, H = buffer[0]["last_hiddens"].shape if output_hidden_states else (0, 0)
+                        N = len(buffer)
 
-                    sample_ids = np.array(sids, dtype=np.int32)
+                        logits_shard = np.empty((N, V), dtype=np.float16)
+                        last_hiddens_shard = np.empty((N, L, H), dtype=np.float16) if output_hidden_states else None
+                        second_last_hiddens_shard = np.empty((N, L, H), dtype=np.float16) if output_hidden_states else None
+                        sids = []
 
-                    shard_path = result_dir / "heavy_results_shard_{:05d}.fp16.npz".format(shard_id)
-                    np.savez_compressed(shard_path,
-                                        logits=logits_shard,
-                                        hiddens=hiddens_shard,
-                                        sample_ids=sample_ids,
-                                        vocab_size=np.array([V], dtype=np.int32),
-                                        num_layers=np.array([L], dtype=np.int32),
-                                        hidden_size=np.array([H], dtype=np.int32))
-                
-                if len(heavy_results) >= 667:
-                    _flush_buffer(heavy_results)
-                    shard_id += 1
-                    heavy_results = []
-                sample_id += 1
+                        for i, row in enumerate(buffer):
+                            logits_shard[i] = row["last_logits"].numpy()
+                            if output_hidden_states:
+                                last_hiddens_shard[i] = row["last_hiddens"].numpy()
+                                second_last_hiddens_shard[i] = row["second_last_hiddens"].numpy()
+                            sids.append(row["sample_id"])
 
-        _flush_buffer(heavy_results)
+                        sample_ids = np.array(sids, dtype=np.int32)
+
+                        shard_path = result_dir / "heavy_results_shard_{:05d}.fp16.npz".format(shard_id)
+                        if output_hidden_states:
+                            np.savez_compressed(shard_path,
+                                                logits=logits_shard,
+                                                last_hiddens=last_hiddens_shard,
+                                                second_last_hiddens=second_last_hiddens_shard,
+                                                sample_ids=sample_ids,
+                                                vocab_size=np.array([V], dtype=np.int32),
+                                                num_layers=np.array([L], dtype=np.int32),
+                                                hidden_size=np.array([H], dtype=np.int32))
+                        else:
+                            np.savez_compressed(shard_path,
+                                                logits=logits_shard,
+                                                sample_ids=sample_ids,
+                                                vocab_size=np.array([V], dtype=np.int32))
+                    
+                    if len(heavy_results) >= 667:
+                        _flush_buffer(heavy_results)
+                        shard_id += 1
+                        heavy_results = []
+                    sample_id += 1
+
+            _flush_buffer(heavy_results)
 
     def evaluate_text(
         self,
@@ -472,7 +478,11 @@ class Evaluator:
             data = load_dataset("json", data_files=data_path, split="train")
             if max_samples:
                 data = data.select(range(max_samples))
+
             result_dir = f"{result_dir}/{model_name}_{data_name}"
+            result_dir = Path(result_dir)
+            result_dir.mkdir(parents=True, exist_ok=True)
+
 
             if data_type == "plain":
                 self.evaluate_plain_text(data,
