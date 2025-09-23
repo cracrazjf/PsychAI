@@ -246,24 +246,21 @@ class Evaluator:
         thread.join()
         print()
 
-    def evaluate_outputs(self,
-                         data: Any,  
-                         data_type: str,
-                         batch_size: int,
-                         generate_args: Dict[str, Any],
-                         result_dir: str,
-                         prompt_template: Optional[str] = None,
-                         output_scores: bool = False,
-                         output_logits: bool = False
-                         ):
-
-        reasoning_effort = generate_args.get("reasoning_effort", None)
+    def evaluate_formatted_text(self,
+                                data: Any,  
+                                data_type: str,
+                                batch_size: int,
+                                generate_args: Dict[str, Any],
+                                result_dir: str,
+                                prompt_template: Optional[str] = None
+                                ):
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
         result_path = result_dir / f"results.jsonl"
         open(result_path, "w").close()
-        
+
+        reasoning_effort = generate_args.get("reasoning_effort", None)
         if data_type == "chat":
             data = data.map(partial(self.format_chat, reasoning_effort=reasoning_effort), batched=True)
         elif data_type == "instruction":
@@ -280,11 +277,7 @@ class Evaluator:
         loader = DataLoader(data, batch_size=batch_size, shuffle=False, collate_fn=collate_for_generate)
 
         sample_id = 0
-        shard_id = 0
-        max_valid_length = 0
-        buffer = []
-
-        tqdm_loader = tqdm(loader, desc="Evaluating")
+        tqdm_loader = tqdm(loader, desc="Evaluating Formatted Text")
         for batch in tqdm_loader:
             # store the labels
             labels = batch.pop("labels")  
@@ -298,25 +291,12 @@ class Evaluator:
                                                         top_p = generate_args["top_p"],
                                                         top_k = generate_args["top_k"],
                                                         use_cache = True,
-                                                        return_dict_in_generate=True,
-                                                        output_scores=output_scores,
-                                                        output_logits=output_logits
+                                                        return_dict_in_generate=True
                                                         )
-            print(f"Outputs: {outputs.keys()}")
             
             # get corresponding scores and tokens
             sequences = outputs.sequences
-            # print(f"Sequences: {sequences}")
-            if output_scores:
-                scores = torch.stack(outputs.scores, dim=1)
-                topk_scores, topk_scores_ids = torch.topk(scores, k=generate_args["top_k"], dim=-1)
-            if output_logits:
-                logits = torch.stack(outputs.logits, dim=1)
-                topk_logits, topk_logits_ids = torch.topk(logits, k=generate_args["top_k"], dim=-1)
-
-            topk_logits, topk_logits_ids = torch.topk(logits, k=generate_args["top_k"], dim=-1)
-
-        #     # decide the input length
+            # decide the input length
             input_len = batch["input_ids"].size(1)
 
             if data_type == "instruction":
@@ -336,114 +316,47 @@ class Evaluator:
 
                 for mini_batch_idx, valid_length in enumerate(valid_new_tokens_length):
                     valid_new_tokens = new_tokens[mini_batch_idx, :valid_length]
-                    max_valid_length = max(max_valid_length, valid_length)
+                    if self.model_manager.reasoning:
+                        decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False)
+                    else:
+                        decoded_valid_new_tokens = self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=True)
 
                     result = {
                         "sample_id": sample_id,
                         "prompt": self.model_manager.tokenizer.decode(batch["input_ids"][mini_batch_idx], skip_special_tokens=True),
-                        "prediction": self.model_manager.tokenizer.decode(valid_new_tokens, skip_special_tokens=False),
+                        "decoded_tokens": decoded_valid_new_tokens,
                         "label": labels[mini_batch_idx],
                         "token_ids": valid_new_tokens.tolist()
                         }
 
-                    temp_buffer = {
-                        "sample_id": sample_id,
-                        "valid_length": int(valid_length),
-                    }
-
-                    if output_scores:
-                        valid_scores = scores[mini_batch_idx, :valid_length, :]
-                        result["chosen_scores"] = valid_scores.gather(1, valid_new_tokens.view(-1, 1)).squeeze(1).tolist()
-                        result["topk_scores_ids"] = topk_scores_ids[mini_batch_idx, :valid_length, :].tolist()
-                        result["topk_scores"] = topk_scores[mini_batch_idx, :valid_length, :].tolist()
-
-                    if output_logits:
-                        valid_logits = logits[mini_batch_idx, :valid_length, :]
-                        result["topk_logits_ids"] = topk_logits_ids[mini_batch_idx, :valid_length, :].tolist()
-                        result["topk_logits"] = topk_logits[mini_batch_idx, :valid_length, :].tolist()
-
-                        temp_buffer["logits"] = valid_logits.detach().cpu().to(torch.float16)
-
-                    buffer.append(temp_buffer)
+                    if self.model_manager.reasoning:
+                        analysis_re, final_re = self.get_analysis_and_final_re()
+                        ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
+                        FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
+                        analysis_match = ANALYSIS_RE.search(decoded_valid_new_tokens)
+                        final_match = FINAL_RE.search(decoded_valid_new_tokens)
+                        if analysis_match:
+                            result["analysis"] = analysis_match.group(1).strip()
+                        if final_match:
+                            result["final"] = final_match.group(1).strip()
 
                     with open(result_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                    def _flush_buffer(buffer, content_key):
-                        _,vocab_size = buffer[0][content_key].shape
-                        shard = torch.full((len(buffer), max_valid_length, vocab_size), -float("inf"), dtype=torch.float16)
-                        for i, row in enumerate(buffer):
-                            shard[i, :row["valid_length"], :] = row[content_key]
-                        shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
-                        np.savez_compressed(shard_path, shard.numpy())
-
-                        manifest_path = result_dir / f"{content_key}_manifest.jsonl"
-                        with open(manifest_path, "w", encoding="utf-8") as f:
-                            for i, row in enumerate(buffer):
-                                f.write(json.dumps({
-                                    "sample_id": row["sample_id"],
-                                    "shard_path": str(shard_path),
-                                    "valid_length": row["valid_length"],
-                                    "row_idx": i,
-                                }) + "\n")
-
-                    if len(buffer) >= 100:
-                        if output_logits:
-                            _flush_buffer(buffer, "logits")
-                        shard_id += 1
-                        max_valid_length = 0
-                        buffer = []
-
                     sample_id += 1
-
-
-        #         # if self.model_manager.reasoning:
-        #         #     pred_text = self.model_manager.tokenizer.batch_decode(
-        #         #         # pad_sequence(sliced_outputs, batch_first=True, padding_value=self.model_manager.tokenizer.pad_token_id),
-        #         #         sliced_output_seqs,
-        #         #         skip_special_tokens=False
-        #         #     )
-        #         #     analysis_re, final_re = self.get_analysis_and_final_re()
-        #         #     pred_text_batch = []
-        #         #     think_text_batch = []
-        #         #     for text in pred_text:
-        #         #         ANALYSIS_RE = re.compile(analysis_re, re.DOTALL | re.IGNORECASE)
-        #         #         FINAL_RE = re.compile(final_re, re.DOTALL | re.IGNORECASE)
-        #         #         analysis_match = ANALYSIS_RE.search(text)
-        #         #         final_match = FINAL_RE.search(text)
-        #         #         if analysis_match:
-        #         #             think_text_batch.append(analysis_match.group(1).strip())
-        #         #             if final_match:
-        #         #                 pred_text_batch.append(final_match.group(1).strip())
-        #         #             else:
-        #         #                 pred_text_batch.append(text)
-        #         #         else:
-        #         #             think_text_batch.append("")
-        #         #             pred_text_batch.append(text)
-
-        #         #     think_texts.extend(think_text_batch)
-        #         #     pred_texts.extend(pred_text_batch)
-        #         # else:
-        #         #     pred_text = self.model_manager.tokenizer.batch_decode(
-        #         #         new_tokens,
-        #         #         skip_special_tokens=True
-        #         #     )
-        #         #     pred_texts.extend(pred_text)
-
-        _flush_buffer(buffer, "logits")
 
     def evaluate_plain_text(self,
                             data: Any,
                             batch_size: int,
-                            layer: list[int],
                             result_dir: str,
+                            layer: list[int]= [-1],
                             top_k: int = 50,
                             output_hidden_states: bool = False,
                             output_attentions: bool = False) -> Dict[str, Dict[str, Optional[float]]]:
 
         result_dir = Path(result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
-        result_path = result_dir / f"hidden_states.jsonl"
+        result_path = result_dir / f"results.jsonl"
         open(result_path, "w").close()
 
         def collate_for_activation(batch):
@@ -455,13 +368,11 @@ class Evaluator:
 
         sample_id = 0
         shard_id = 0
-        max_seq_length = 0
-        logits_buffer = []
-        tqdm_loader = tqdm(loader, desc="Evaluating Activations")
+        results = []
+        heavy_results = []
+        tqdm_loader = tqdm(loader, desc="Evaluating Plain Text")
         for batch in tqdm_loader:
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            mask = batch["attention_mask"].bool()
-            input_ids = batch["input_ids"]
 
             outputs = self.model_manager.model(**batch,
                                                 return_dict=True,
@@ -470,69 +381,83 @@ class Evaluator:
                                                 output_attentions=output_attentions,
                                                 )
 
+            mask = batch["attention_mask"].bool()
+            input_ids = batch["input_ids"]
             logits = outputs.logits
             topk_logits, topk_logits_ids = torch.topk(logits, k=top_k, dim=-1)
 
             for i, m in enumerate(mask):
-                max_seq_length = max(max_seq_length, m.sum())
+                shift_label_ids = input_ids[i][m][1:]
+                shift_logits = logits[i][m][:-1, :]
+                chosen_logits = shift_logits.gather(1, shift_label_ids.unsqueeze(1)).squeeze(1)
+                last_valid_index = int(m.sum().item() - 1)
+
                 result = {
                     "sample_id": sample_id,
                     "input_ids": input_ids[i][m].tolist(),
                     "decoded_input": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in input_ids[i][m]],
+                    "label": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in shift_label_ids],
+                    "chosen_logits": chosen_logits.tolist(),
                     "topk_logits": topk_logits[i][m].tolist(),
                     "topk_logits_ids": topk_logits_ids[i][m].tolist(),
-                    "topk_logits_tokens": [self.model_manager.tokenizer.decode(id, skip_special_tokens=False) for id in topk_logits_ids[i][m]],
                 }
-                logits_buffer.append({"sample_id": sample_id, 
-                                      "logits": logits[i][m].detach().cpu().to(torch.float16),
-                                      "valid_length": m.sum()})
-                # for l in layer:
-                #     hidden_states = outputs.hidden_states[l][i][m].detach().cpu().to(torch.float16).numpy()
-                #     result[f"layer_{l}"] = hidden_states.tolist()
+
+                heavy_result = {
+                    "sample_id": sample_id,
+                    "last_logits": logits[i][last_valid_index].detach().cpu().to(torch.float16),
+                    "last_hiddens": torch.stack([outputs.hidden_states[l][i][last_valid_index] for l in layer], dim=0).detach().cpu().to(torch.float16)
+                }
+                
+                results.append(result)
+                heavy_results.append(heavy_result)
+
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
-                def _flush_buffer(buffer, content_key, max_length):
-                    _,vocab_size = buffer[0][content_key].shape
-                    shard = torch.full((len(buffer), max_length, vocab_size), -float("inf"), dtype=torch.float16)
-                    for i, row in enumerate(buffer):
-                        shard[i, :row["valid_length"], :] = row[content_key]
-                    shard_path = result_dir / "{}_shard_{:05d}.fp16.npz".format(content_key, shard_id)
-                    np.savez_compressed(shard_path, shard.numpy())
+                def _flush_buffer(buffer):
+                    V = buffer[0]["last_logits"].shape[0]
+                    L, H = buffer[0]["last_hiddens"].shape
+                    N = len(buffer)
 
-                    manifest_path = result_dir / f"{content_key}_manifest.jsonl"
-                    with open(manifest_path, "w", encoding="utf-8") as f:
-                        for i, row in enumerate(buffer):
-                            f.write(json.dumps({
-                                "sample_id": row["sample_id"],
-                                "shard_path": str(shard_path),
-                                "row_idx": i,
-                            }) + "\n")
+                    logits_shard = np.empty((N, V), dtype=np.float16)
+                    hiddens_shard = np.empty((N, L, H), dtype=np.float16)
+                    sids = []
+
+                    for i, row in enumerate(buffer):
+                        logits_shard[i] = row["last_logits"].astype(np.float16, copy=False)
+                        hiddens_shard[i] = row["last_hiddens"].astype(np.float16, copy=False)
+                        sids.append(row["sample_id"])
+
+                    sample_ids = np.array(sids, dtype=f"<U{max(map(len, sids))}")
+
+                    shard_path = result_dir / "heavy_results_shard_{:05d}.fp16.npz".format(shard_id)
+                    np.savez_compressed(shard_path,
+                                        logits=logits_shard,
+                                        hiddens=hiddens_shard,
+                                        sample_ids=sample_ids,
+                                        vocab_size=np.array([V], dtype=np.int32),
+                                        num_layers=np.array([L], dtype=np.int32),
+                                        hidden_size=np.array([H], dtype=np.int32))
                 
-                if len(logits_buffer) >= 667:
-                    _flush_buffer(logits_buffer, "logits", max_seq_length)
+                if len(heavy_results) >= 667:
+                    _flush_buffer(heavy_results)
                     shard_id += 1
-                    max_seq_length = 0
-                    logits_buffer = []
+                    heavy_results = []
                 sample_id += 1
 
-        _flush_buffer(logits_buffer, "logits", max_seq_length)
+        _flush_buffer(heavy_results)
 
-
-    def benchmark_text(
+    def evaluate_text(
         self,
         model_name: str,
         model_path: str,
         reasoning: bool,
-        data_map: Dict[str, str],
+        data_map: Dict[str, Any],
         data_type: str,
         batch_size: int,
         result_dir: str,
-        output_scores: bool = False,
-        output_logits: bool = False,
-        layer: list[int] = None,
+        layer: list[int] = [-1],
         output_hidden_states: bool = False,
-        output_attentions: bool = False,
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None
@@ -547,27 +472,25 @@ class Evaluator:
 
         for data_name, data_path in data_map.items():
             data = load_dataset("json", data_files=data_path, split="train")
-            result_dir = f"{result_dir}/{model_name}_{data_name}"
             if max_samples:
                 data = data.select(range(max_samples))
-            if output_hidden_states or output_attentions:
+            result_dir = f"{result_dir}/{model_name}_{data_name}"
+            
+            if data_type == "plain":
                 self.evaluate_plain_text(data,
-                                            batch_size=batch_size,
-                                            layer=layer,
-                                            result_dir=result_dir,
-                                            top_k=generate_args["top_k"],
-                                            output_hidden_states=output_hidden_states,
-                                            output_attentions=output_attentions)
+                                        batch_size=batch_size,
+                                        layer=layer,
+                                        result_dir=result_dir,
+                                        top_k=generate_args["top_k"],
+                                        output_hidden_states=output_hidden_states)
             else:
-                self.evaluate_outputs(data,
-                                    data_type,
-                                    batch_size=batch_size,
-                                    generate_args=generate_args,
-                                    result_dir=result_dir,
-                                    output_scores=output_scores,
-                                    output_logits=output_logits,
-                                    )
-
+                self.evaluate_formatted_text(data,
+                                            data_type,
+                                            batch_size=batch_size,
+                                            generate_args=generate_args,
+                                            result_dir=result_dir,
+                                            prompt_template=prompt_template
+                                            )
 
     def interactive_text(self) -> None:
         models = self.list_available_models()
@@ -607,15 +530,15 @@ class Evaluator:
 
         def _get_model_args():
             while True:
-                    reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
-                    if reasoning_in in ("y", "yes"):
-                        reasoning = True
-                        break
-                    elif reasoning_in in ("n", "no"):
-                        reasoning = False
-                        break
-                    else:
-                        print("⚠️ Please enter 'y' or 'n'.")
+                reasoning_in = input("Is this a reasoning model? (y/n): ").strip().lower()
+                if reasoning_in in ("y", "yes"):
+                    reasoning = True
+                    break
+                elif reasoning_in in ("n", "no"):
+                    reasoning = False
+                    break
+                else:
+                    print("⚠️ Please enter 'y' or 'n'.")
             prompts = {
                     "max_seq_length": (int, "Please enter maximum context window size: ", 2048),
                     "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Load the model in 4bit [True/False]: ", True),
@@ -636,7 +559,7 @@ class Evaluator:
             return reasoning, model_args
 
         print("\n Welcome to PSYCHAI Interactive LLM Evaluator")
-        print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
+        print("Commands: chat | switch <model_name> | models | datasets | evaluate | help | quit")
 
         while True:
             try:
@@ -650,7 +573,7 @@ class Evaluator:
                 break
 
             if user == "help":
-                print("Commands: chat | switch <model_name> | models | datasets | benchmark | compare | help | quit")
+                print("Commands: chat | switch <model_name> | models | datasets | evaluate | help | quit")
                 continue
 
             if user == "models":
@@ -707,8 +630,8 @@ class Evaluator:
                     self.chat(messages, generate_args)
                 continue
 
-            if user == "benchmark":
-                print("You've entered the benchmark mode, you can run a single model on multiple datasets.")
+            if user == "evaluate":
+                print("You've entered the evaluate mode.")
 
                 model_name = input("Please enter the model name: ").strip()
                 model_path = models.get(model_name, model_name)
@@ -716,44 +639,73 @@ class Evaluator:
 
                 print(f"Here are the available datasets:")
                 print("\n".join(datasets.keys()) or "(none)")
-                data_names = input("Please enter the data names (separated by comma or 'all'): ").strip()
-                if data_names == "all":
-                    data_names = list(datasets.keys())
-                else:
-                    data_names = [d.strip() for d in data_names.split(",")]
-                selected_data = {data_name: datasets[data_name] for data_name in data_names}
-                data_type = input("Please enter the data format(chat or instruction): ").strip()
-                result_dir = input("Where do you want to save the results: ").strip()
-                # labels_map = {}
-                # for data_name in data_names:
-                #     while True:
-                #         labels = input(f"Please enter the true labels for {data_name} e.g.[label1,label2]: ").strip()
-                #         if labels:
-                #             labels = ast.literal_eval(labels)
-                #             labels_map[data_name] = labels
-                #             break
-                #         else:
-                #             print("You must enter labels for each data")
-
+                print("if you don't see the data you want, you can enter the data path directly")
+                data_name = input("Please enter the data name: ").strip()
+                data_path = input("Please enter the data path: ").strip()
+                data_type = input("Please enter the data format(chat/instruction/plain): ").strip()
                 max_samples = input("Please enter the number of samples you want to evaluate: ").strip()
                 max_samples = int(max_samples) if max_samples else None
                 batch_size = input("Please enter the batch size of the evaluation: ").strip()
                 batch_size = int(batch_size) if batch_size else 1
+                result_dir = input("Where do you want to save the results: ").strip()
 
-                generate_args = _get_generate_args(reasoning)
-                print(f"Will start evaluating {model_name} on {data_names}...")
+                if data_type == "plain":
+                    while True:
+                        output_hidden_states = input("Please enter whether to output hidden states(True/False): ").strip()
+                        if output_hidden_states in ("true", "1", "yes"):
+                            output_hidden_states = True
+                            break
+                        elif output_hidden_states in ("false", "0", "no"):
+                            output_hidden_states = False
+                            break
+                        else:
+                            print("⚠️ Please enter 'True' or 'False'.")
+                    if output_hidden_states:
+                        layer = input("Please enter the layers you want to output(separated by comma): ").strip()
+                        layer = [int(l) for l in layer.split(",")]
+                    else:
+                        layer = [-1]
+                else:
+                    generate_args = _get_generate_args(reasoning)
+                    while True:
+                        output_scores = input("Please enter whether to output scores(True/False): ").strip()
+                        if output_scores in ("true", "1", "yes"):
+                            output_scores = True
+                            break
+                        elif output_scores in ("false", "0", "no"):
+                            output_scores = False
+                            break
+                        else:
+                            print("⚠️ Please enter 'True' or 'False'.")
 
-                self.benchmark_text(model_name, 
+                    while True:
+                        output_logits = input("Please enter whether to output logits(True/False): ").strip()
+                        if output_logits in ("true", "1", "yes"):
+                            output_logits = True
+                            break
+                        elif output_logits in ("false", "0", "no"):
+                            output_logits = False
+                            break
+                        else:
+                            print("⚠️ Please enter 'True' or 'False'.")
+
+                print(f"Will start evaluating {model_name} on {data_name}...")
+
+                self.evaluate_text(model_name, 
                                     model_path,
                                     reasoning, 
-                                    selected_data, 
+                                    data_name, 
+                                    data_path, 
                                     data_type,
                                     result_dir=result_dir,
-                                    # labels_map, 
                                     max_samples=max_samples,
                                     batch_size=batch_size,
                                     model_args=model_args,
-                                    generate_args=generate_args)
+                                    generate_args=generate_args,
+                                    output_scores=output_scores,
+                                    output_logits=output_logits,
+                                    layer=layer,
+                                    output_hidden_states=output_hidden_states)
                 continue
 
-            print("Unknown command. Try: chat | switch <model> | models | datasets | benchmark | compare | help | quit")
+            print("Unknown command. Try: chat | switch <model> | models | datasets | evaluate | help | quit")
