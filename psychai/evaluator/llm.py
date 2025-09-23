@@ -426,7 +426,7 @@ class Evaluator:
                         hiddens_shard[i] = row["last_hiddens"].numpy()
                         sids.append(row["sample_id"])
 
-                    sample_ids = np.array(sids, dtype=f"<U{max(map(len, sids))}")
+                    sample_ids = np.array(sids, dtype=np.int32)
 
                     shard_path = result_dir / "heavy_results_shard_{:05d}.fp16.npz".format(shard_id)
                     np.savez_compressed(shard_path,
