@@ -52,7 +52,7 @@ def load_any_as_chat(
     file_path: str,
     input_key: str = "input",
     *,
-    output_key: Optional[str] = "output",
+    output_key: Optional[str] = None,
     system_prompt: Optional[str] = None,
     question: Optional[str] = None,
     constraint: Optional[str] = None,
