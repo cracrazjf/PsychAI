@@ -466,7 +466,7 @@ class Evaluator:
         max_samples: Optional[int] = None,
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None,
-        prompt_template: Optional[str] = None
+        prompt_template: Optional[str] = None,
         save_tokenizer: bool = False
     ):
         self.load_model_and_tokenizer(model_name, 
