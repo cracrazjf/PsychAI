@@ -467,6 +467,7 @@ class Evaluator:
         model_args: Optional[Dict[str, Any]] = None,
         generate_args: Optional[Dict[str, Any]] = None,
         prompt_template: Optional[str] = None
+        save_tokenizer: bool = False
     ):
         self.load_model_and_tokenizer(model_name, 
                                       model_path, 
@@ -500,6 +501,8 @@ class Evaluator:
                                             result_dir=result_dir,
                                             prompt_template=prompt_template
                                             )
+        if save_tokenizer:
+            self.model_manager.tokenizer.save_pretrained(result_dir/f"{model_name}_tokenizer")
 
     def interactive_text(self) -> None:
         models = self.list_available_models()
