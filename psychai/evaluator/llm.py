@@ -509,30 +509,28 @@ class Evaluator:
         datasets = self.list_available_datasets()
 
         def _get_generate_args(is_reasoning: bool):
-            default_generate_args = self.config.GENERATE_ARGS
-            
             prompts = {
-                "max_new_tokens": (int, "Please enter the maximum number of new tokens: "),
-                "temperature": (float, "Please enter the temperature: "),
-                "do_sample": (lambda x: x.lower() in ["true", "1", "yes"], "Please enter whether to sample tokens [True/False]: "),
-                "top_p": (float, "Please enter top_p: "),
-                "top_k": (int, "Please enter top_k: "),
+                "max_new_tokens": (int, "Please enter the maximum number of new tokens: ", 128),
+                "temperature": (float, "Please enter the temperature: ", 0.7),
+                "do_sample": (lambda x: x.lower() in ["true", "1", "yes"], "Please enter whether to sample tokens [yes/no]: ", True),
+                "top_p": (float, "Please enter top_p: ", 0.95),
+                "top_k": (int, "Please enter top_k: ", 50),
             }
             if is_reasoning:
-                prompts["reasoning_effort"] = (str, "Please enter the reasoning effort [low/medium/high]: ")
+                prompts["reasoning_effort"] = (str, "Please enter the reasoning effort [low/medium/high]: ", "medium")
 
             generate_args = {}
             print("\nLeave blank if you want to use the default value")
-            for key, (cast, message) in prompts.items():
+            for key, (cast, message, default) in prompts.items():
                 raw = input(message).strip()
                 if raw == "":
-                    generate_args[key] = default_generate_args[key]
+                    generate_args[key] = default
                 else:
                     try:
                         generate_args[key] = cast(raw)
                     except ValueError:
                         print(f"⚠️ Invalid input for {key}, using default.")
-                        generate_args[key] = default_generate_args[key]
+                        generate_args[key] = default
 
             print("\nThis model will use the following generate args:")
             for k, v in generate_args.items():
@@ -553,7 +551,7 @@ class Evaluator:
                     print("⚠️ Please enter 'y' or 'n'.")
             prompts = {
                     "max_seq_length": (int, "Please enter maximum context window size: ", 2048),
-                    "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Load the model in 4bit [True/False]: ", True),
+                    "load_in_4bit": (lambda x: x.lower() in ["true", "1", "yes"], "Load the model in 4bit [yes/no]: ", True),
                     "dtype": (str, "Please enter dtype: ", None),
                 }
             model_args = {}
