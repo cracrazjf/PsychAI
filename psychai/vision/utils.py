@@ -1,6 +1,7 @@
 import json
 import os
 import hashlib
+import csv
 from pathlib import Path
 from typing import Any, Iterator, List, Dict, Tuple, Optional
 import numpy as np
@@ -8,69 +9,9 @@ import torch
 from PIL import Image
 from datasets import Dataset, DatasetDict
 
-__all__ = ["find_file", "load_json", "load_jsonl", "save_json", "save_jsonl", "stable_id", "to_numpy", "pixels_to_pil"]
 
+def _to_numpy(x: Any) -> np.ndarray:
 
-def find_file(root_dir, target_file):
-    return next(Path(root_dir).rglob(target_file), None)
-    
-def load_json(filepath: str) -> Any:
-    with open(filepath, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def load_jsonl(p) -> Iterator[Any]: 
-    with open(p, "r", encoding="utf-8") as f:
-        for line in f:
-            yield json.loads(line)
-
-def save_json(data: Any, filepath: str, indent: int = 2):
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=indent, ensure_ascii=False, default=str)
-
-def save_jsonl(data: List[Dict], filepath: str):
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        for item in data:
-            f.write(json.dumps(item, ensure_ascii=False, default=str) + '\n')
-
-def stable_id(*parts: Any, digest_size: int = 16) -> str:
-    h = hashlib.blake2b(digest_size=digest_size)
-    for p in parts:
-        if isinstance(p, (bytes, bytearray)):
-            h.update(p)
-        else:
-            h.update(str(p).encode("utf-8", errors="ignore"))
-        h.update(b"|")
-    return h.hexdigest()
-
-def split(data: Iterator[Dict], split_ratio: list[float] = [0.9, 0.05, 0.05], *, shuffle:bool = True, seed: int = 66, save_path: Optional[str] = None) -> Dataset:
-    dataset = Dataset.from_list(list(data))
-    if sum(split_ratio) != 1:
-        raise ValueError("split_ratio must sum to 1")
-    if shuffle:
-        dataset = dataset.shuffle(seed=seed)
-    
-    splits = {}
-    train_rest_split = dataset.train_test_split(test_size=1-split_ratio[0], seed=seed)
-    splits["train"] = train_rest_split["train"]
-    test_val_split = train_rest_split["test"].train_test_split(test_size=split_ratio[2]/(sum(split_ratio[1:])), seed=seed)
-    splits["test"] = test_val_split["train"]
-    splits["validation"] = test_val_split["test"]
-
-    if save_path is not None:
-        os.makedirs(save_path, exist_ok=True)
-        for split_name, split_data in splits.items():
-            split_data.to_json(save_path + f"/{split_name}.jsonl", orient="records", lines=True)
-        return None
-    else:
-        return DatasetDict(splits)
-
-
-def to_numpy(x: Any) -> np.ndarray:
-    """
-    This function can only convert torch tensor, numpy array, and list to numpy array.
-    """
     if torch is not None and isinstance(x, torch.Tensor):
         x = x.detach().cpu().numpy()
     elif isinstance(x, np.ndarray):
@@ -79,7 +20,6 @@ def to_numpy(x: Any) -> np.ndarray:
         return np.array(x)
     else:
         raise TypeError(f"Expected numpy array, torch tensor, or list; got {type(x).__name__}")
-
 
 def _to_hwc(arr: np.ndarray, layout: Optional[str]) -> np.ndarray:
     if arr.ndim == 2:
@@ -104,7 +44,6 @@ def _to_hwc(arr: np.ndarray, layout: Optional[str]) -> np.ndarray:
         f"Cannot infer channel layout for shape {arr.shape}. "
         "Provide layout='HWC' or layout='CHW'."
     )
-
 
 def _sanitize_range_dtype(arr: np.ndarray) -> Tuple[np.ndarray, str]:
     if np.issubdtype(arr.dtype, np.integer):
@@ -140,14 +79,8 @@ def pixels_to_pil(
     assume_bgr: bool = False,
     keep_alpha: bool = False,
 ) -> Image.Image:
-    """
-    Convert arbitrary pixel arrays/tensors to a PIL.Image, by:
-      1) Converting to numpy
-      2) Inferring layout and **converting to HWC**
-      3) Sanitizing dtype/range to uint8 [0,255]
-      4) Returning RGB (default) or RGBA if keep_alpha=True
-    """
-    arr = to_numpy(pixels)
+
+    arr = _to_numpy(pixels)
 
     # 1) Infer + convert to HWC
     arr_hwc = _to_hwc(arr, layout)

@@ -13,9 +13,6 @@ try:
 except Exception:
     _HAS_SAFETENSORS = False
 
-__all__ = ["save_config", "save_pretrained", "load_config", "build_spec_from_config", "from_pretrained"]
-
-# --------- helpers
 
 def _jsonify(obj: Any) -> Any:
     if obj is None or isinstance(obj, (bool, int, float, str)):
@@ -52,8 +49,8 @@ def _sha256_of_bytes(b: bytes) -> str:
 # --------- config extraction
 
 def extract_spec_dict(model_or_spec) -> Dict[str, Any]:
-    if hasattr(model_or_spec, 'layers') and hasattr(model_or_spec, 'vocab_size') and hasattr(model_or_spec, 'image_shape'):
-        spec_layers = model_or_spec.layers
+    if hasattr(model_or_spec, 'layers_spec') and hasattr(model_or_spec, 'vocab_size') and hasattr(model_or_spec, 'image_shape'):
+        spec_layers = model_or_spec.layers_spec
         vocab_size = getattr(model_or_spec, 'vocab_size', None)
         image_shape = getattr(model_or_spec, 'image_shape', None)
     elif hasattr(model_or_spec, 'spec'):
@@ -97,7 +94,7 @@ def build_config_dict(
     cfg = {
         "model_type": model_type,       # e.g., "custom-elman"
         "config_version": config_version,
-        "spec": spec_dict,              # <- your ModelSpec as a dict
+        "spec": spec_dict,
         "metadata": meta,
         "arch_hash": arch_hash,
     }
@@ -110,8 +107,8 @@ def unwrap_model(m: nn.Module) -> nn.Module:
             m = m.module
             continue
         # 2) your custom wrapper with .model
-        if hasattr(m, "model") and isinstance(getattr(m, "model"), nn.Module):
-            m = m.model
+        if hasattr(m, "base_model") and isinstance(getattr(m, "base_model"), nn.Module):
+            m = m.base_model
             continue
         # 3) PEFT (optional)
         try:
@@ -154,8 +151,8 @@ def save_pretrained(
     # 1) Build config
     if model_or_spec_for_config is None:
         # Try to infer spec from model
-        if hasattr(model, "model") and hasattr(model.model, "spec"):
-            target_for_cfg = model.model.spec
+        if hasattr(model, "base_model") and hasattr(model.base_model, "spec"):
+            target_for_cfg = model.base_model.spec
         elif hasattr(model, "spec"):
             target_for_cfg = model.spec
         else:
@@ -228,10 +225,9 @@ def build_spec_from_config(config: Dict[str, Any]):
     )
     for layer_spec in spec_dict["layers"]:
         # already has "name" and params
-        spec.layers.append(layer_spec)
+        spec.layers_spec.append(layer_spec)
         spec.names.add(layer_spec["name"])
     return spec
-
 
 def from_pretrained(
     load_dir: str,

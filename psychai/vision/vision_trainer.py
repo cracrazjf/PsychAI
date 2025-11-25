@@ -1,8 +1,5 @@
-from __future__ import annotations
-
-from ...config import TrainingConfig
 from typing import Any, Optional, List
-from ..model_manager import Vision_ModelManager
+from .vm_mm import Vision_ModelManager
 from ..dataloader import create_dataloader_hf, Record
 import torch
 import torch.nn as nn
@@ -10,7 +7,7 @@ from torch.cuda.amp import autocast
 from torch.optim import AdamW, SGD
 
 class Vision_Trainer:
-    def __init__(self, config: TrainingConfig = None):
+    def __init__(self, config= None):
         """
         Initialize trainer with configuration
         

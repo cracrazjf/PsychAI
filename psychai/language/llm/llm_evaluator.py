@@ -7,15 +7,14 @@ from tqdm import tqdm
 import threading
 from pathlib import Path
 from functools import partial
-from ..model_manager.llm import LLM_ModelManager
+from .llm_mm import LLM_ModelManager
 from typing import Any, Dict, List, Optional, Tuple
 import torch
-import numpy as np
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import TextIteratorStreamer
 
-class Evaluator:
+class LLM_Evaluator:
     def __init__(self, config):
         self.config = config
         self.use_unsloth = config.USE_UNSLOTH

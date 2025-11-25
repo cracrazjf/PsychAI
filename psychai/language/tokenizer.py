@@ -6,157 +6,7 @@ from tokenizers.trainers import BpeTrainer, UnigramTrainer, WordLevelTrainer, Wo
 from tokenizers import AddedToken
 from tokenizers import decoders
 from transformers import PreTrainedTokenizerFast
-import ftfy
-import re
 from typing import Dict, List, Tuple, Iterable, Optional
-
-# --- Core regexes ---
-RE_URL      = re.compile(r"https?://\S+")
-RE_EMAIL    = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-RE_NUM      = re.compile(r"\b\d[\d,]*\.?\d*\b")
-RE_MONEY    = re.compile(r"(?<!\w)(?:\$|€|£|¥|₹)\s?\d[\d,]*\.?\d*(?!\w)")
-RE_PERCENT  = re.compile(r"\b\d+(\.\d+)?\s?%\b")
-RE_DATE     = re.compile(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b")
-RE_TIME     = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d(?:\s?[APap][Mm])?\b")
-# Social
-RE_USER     = re.compile(r"@[A-Za-z0-9_]{1,30}")
-RE_HASHTAG  = re.compile(r"#[\w]+")
-RE_EMOJI    = re.compile(r"[\U0001F300-\U0001FAFF]")  # broad emoji range
-RE_LAUGH    = re.compile(r"(?:ha|he|hi|ho|ha)+|l+o+l+", re.IGNORECASE)
-RE_EMPH_P   = re.compile(r"([!?\.])\1{2,}")           # !!!, ???, ...
-RE_EMPH_CH  = re.compile(r"([A-Za-z])\1{2,}")         # sooo, cooool
-# Biomedical
-RE_GENE     = re.compile(r"\b[A-Z]{2,6}\d+\b")        # e.g., IL2, BRCA1
-RE_UNIT     = re.compile(r"\b(?:mg|kg|ml|mm|cm|km|μg|ng|mM|μM|nM|%)\b", re.IGNORECASE)
-# Code
-RE_STRING   = re.compile(r"(\".*?\"|'.*?')")          # naive (no escapes)
-RE_OPERATOR = re.compile(r"([=+\-/*%<>!&|^]=|==|!=|<=|>=|//|\*\*|->|::)")
-
-RULES: List[Tuple[str, re.Pattern, str]] = [
-    ("URL",     RE_URL,     "<URL>"),
-    ("EMAIL",   RE_EMAIL,   "<EMAIL>"),
-    ("NUM",     RE_NUM,     "<NUM>"),
-    ("MONEY",   RE_MONEY,   "<MONEY>"),
-    ("PERCENT", RE_PERCENT, "<PERCENT>"),
-    ("DATE",    RE_DATE,    "<DATE>"),
-    ("TIME",    RE_TIME,    "<TIME>"),
-    ("USER",    RE_USER,    "<USER>"),
-    ("HASHTAG", RE_HASHTAG, "<HASHTAG>"),
-    ("EMOJI",   RE_EMOJI,   "<EMOJI>"),
-    ("LAUGH",   RE_LAUGH,   "<LAUGH>"),
-    ("EMPH",    RE_EMPH_P,  "<EMPH>"),
-    ("EMPH",    RE_EMPH_CH, "<EMPH>"),
-    ("GENE",    RE_GENE,    "<GENE>"),
-    ("UNIT",    RE_UNIT,    "<UNIT>"),
-    ("STRING",  RE_STRING,  "<STR>"),
-    ("OPERATOR", RE_OPERATOR, "<OP>"),
-]
-
-# --- Preset definitions ---
-PRESETS: Dict[str, List[Tuple[str, re.Pattern, str]]] = {
-    "general": [
-        ("MONEY",   RE_MONEY,   "<MONEY>"),
-        ("PERCENT", RE_PERCENT, "<PERCENT>"),
-        ("DATE",    RE_DATE,    "<DATE>"),
-        ("TIME",    RE_TIME,    "<TIME>"),
-        ("NUM",     RE_NUM,     "<NUM>"),
-        ("URL",     RE_URL,     "<URL>"),
-        ("EMAIL",   RE_EMAIL,   "<EMAIL>"),
-    ],
-    "social": [
-        ("URL",     RE_URL,     "<URL>"),
-        ("EMAIL",   RE_EMAIL,   "<EMAIL>"),
-        ("USER",    RE_USER,    "<USER>"),
-        ("HASHTAG", RE_HASHTAG, "<HASHTAG>"),
-        ("EMOJI",   RE_EMOJI,   "<EMOJI>"),
-        ("LAUGH",   RE_LAUGH,   "<LAUGH>"),
-        ("EMPH",    RE_EMPH_P,  "<EMPH>"),
-        ("EMPH",    RE_EMPH_CH, "<EMPH>"),
-        ("NUM",     RE_NUM,     "<NUM>"),
-    ],
-    "biomedical": [
-        ("MONEY",   RE_MONEY,   "<MONEY>"),
-        ("PERCENT", RE_PERCENT, "<PERCENT>"),
-        ("DATE",    RE_DATE,    "<DATE>"),
-        ("TIME",    RE_TIME,    "<TIME>"),
-        ("UNIT",    RE_UNIT,    "<UNIT>"),
-        ("GENE",    RE_GENE,    "<GENE>"),
-        ("NUM",     RE_NUM,     "<NUM>"),
-        ("URL",     RE_URL,     "<URL>"),
-        ("EMAIL",   RE_EMAIL,   "<EMAIL>"),
-    ],
-    "code": [
-        ("STRING",  RE_STRING,  "<STR>"),
-        ("URL",     RE_URL,     "<URL>"),
-        ("NUM",     RE_NUM,     "<NUM>"),
-        ("OP",      RE_OPERATOR,"<OP>"),
-        ("EMAIL",   RE_EMAIL,   "<EMAIL>"),
-    ],
-}
-
-def apply_placeholders(
-    text: str,
-    *,
-    rules: Optional[str] = None,
-    preset: Optional[str] = None,
-    reversible: bool = False,
-    extra_rules: Optional[Iterable[Tuple[str, re.Pattern, str]]] = None,
-    protected_terms: Optional[Iterable[str]] = None,
-) -> Tuple[str, List[Tuple[str, str]]]:
-    
-    rules = []
-    if preset is None:
-        if rules is not None:
-            for rule in rules:
-                if rule not in RULES:
-                    raise ValueError(f"Unknown rule: {rule}. Choose from {list(RULES)}")
-                else:
-                    rules.append(RULES[rule])
-    else:
-        if preset not in PRESETS:
-            raise ValueError(f"Unknown preset: {preset}. Choose from {list(PRESETS)}")
-        rules = list(PRESETS[preset])
-
-    if extra_rules:
-        rules.extend(extra_rules)
-
-    mapping: List[Tuple[str, str]] = []
-    counters: Dict[str, int] = {}
-
-    # Protect exact surface forms (skip replacement inside them)
-    protected_terms = set(protected_terms or [])
-    # Quick mask for protected terms to avoid accidental replacement inside them
-    masks: List[Tuple[str, str]] = []
-    for i, term in enumerate(sorted(protected_terms, key=len, reverse=True), 1):
-        placeholder = f"<__PROTECT_{i}__>"
-        if term in text:
-            text = text.replace(term, placeholder)
-            masks.append((placeholder, term))
-
-    # Apply rules in order
-    for tag, pattern, ph in rules:
-        if reversible:
-            def sub_fn(m):
-                counters[tag] = counters.get(tag, 0) + 1
-                indexed = f"<{tag}_{counters[tag]}>"
-                mapping.append((indexed, m.group(0)))
-                return indexed
-            text = pattern.sub(sub_fn, text)
-        else:
-            text = pattern.sub(ph, text)
-
-    # Unmask protected terms
-    for placeholder, term in masks:
-        text = text.replace(placeholder, term)
-
-    return text, mapping
-
-
-def restore_placeholders(text: str, mapping: List[Tuple[str, str]]) -> str:
-    """Reverse placeholders using the mapping from apply_placeholders(..., reversible=True)."""
-    for ph, original in mapping:
-        text = text.replace(ph, original)
-    return text
 
 
 def make_normalizer(
@@ -165,12 +15,12 @@ def make_normalizer(
     unicode_form: str | None = "NFKC",# "NFD","NFKD","NFC","NFKC", or None
     lowercase: bool = False,
     strip_accents: bool = False,
-    strip: bool = True,
-    strip_left: bool = True,
-    strip_right: bool = True,
+    strip: bool = False,
+    strip_left: bool = False,
+    strip_right: bool = False,
     replaces: list[tuple[str, str]] | None = None,
-    bert_handle_chinese_chars: bool = True,
-    bert_clean_text: bool = True 
+    bert_handle_chinese_chars: bool = False,
+    bert_clean_text: bool = False 
 ):
     steps = []
 
@@ -227,7 +77,6 @@ def make_normalizer(
         return steps[0]
     return norm.Sequence(steps)
 
-
 def make_pretokenizer(
     *,
     use_whitespace: bool = False,
@@ -235,7 +84,7 @@ def make_pretokenizer(
     use_byte_level: bool = False,
     use_metaspace: bool = False,
     metaspace_replacement: str = "▁",
-    metaspace_add_prefix_space: bool = True,
+    metaspace_add_prefix_space: bool = False,
     split_digits: bool = False,
     # --- custom rules ---
     split_underscores: bool = False,
@@ -288,7 +137,6 @@ def make_pretokenizer(
     if len(steps) == 1:
         return steps[0]
     return pre.Sequence(steps)
-
 
 def train_tokenizer(
     *,
@@ -361,14 +209,12 @@ def train_tokenizer(
 
     return tok
 
-
 def create_custom_tokenizer(vocab: Dict[str, int], pretokenizer: Optional[pre.PreTokenizer] = None):
     model = WordLevel(vocab=vocab, unk_token="<unk>")
     tok = Tokenizer(model)
     if pretokenizer is not None:
         tok.pre_tokenizer = pretokenizer
     return tok
-
 
 def wrap_tokenizer(
     tokenizer: Tokenizer, 
@@ -389,7 +235,6 @@ def wrap_tokenizer(
         cls_token=cls_token,
     )
     return fast_tok
-
 
 def print_tokenizer(tokenizer):
     v2i = tokenizer.get_vocab()

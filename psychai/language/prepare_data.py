@@ -1,10 +1,35 @@
-import json
-import os
-import hashlib
-import random
-import pandas as pd
-from typing import List, Dict, Any, Optional, Callable, Iterator
-from .read_any import read_csv, read_jsonl, read_json, infer_file_type
+from .utils import read_json, read_jsonl, read_csv, stable_id, infer_file_type
+from typing import Dict, Optional, Iterator, Callable
+
+def load_any(file_path: str, 
+             file_type: str = "json",
+             task: str = "causal_lm") -> Iterator[Dict]:
+
+    if file_type == "csv":
+        row_dicts = read_csv(file_path)
+    elif file_type == "jsonl":
+        row_dicts = read_jsonl(file_path)
+    elif file_type == "json":
+        row_dicts = read_json(file_path)
+    else:
+        raise ValueError(f"Invalid file type: {file_type}")
+    
+    if task == "causal_lm":
+        required_keys = ["text"]
+    elif task == "masked_lm":
+        required_keys = ["text"]
+    elif task == "text_classification":
+        required_keys = ["text", "label"]
+    elif task == "token_classification":
+        required_keys = ["tokens", "label"]
+    else:
+        raise ValueError(f"Invalid task: {task}, must be 'causal_lm', 'masked_lm', 'text_classification', or 'token_classification'")
+
+    for row in row_dicts:
+        for key in required_keys:
+            if key not in row:
+                raise ValueError(f"Missing required key: {key}")
+        yield row
 
 def convert_to_chat_format(
     input_text: str, 
@@ -148,3 +173,4 @@ def load_any_as_instruction(
                 str(output_text)
             )
             yield conversation
+

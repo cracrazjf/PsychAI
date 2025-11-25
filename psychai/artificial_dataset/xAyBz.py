@@ -1,11 +1,10 @@
+import json
+import itertools
 import numpy as np
 from typing import Any
-import itertools
 from pathlib import Path
 from collections import defaultdict
-import json
-import numpy as np
-from ..tokenizer.tokenizer import create_custom_tokenizer, wrap_tokenizer, make_pretokenizer
+from ..language.tokenizer import create_custom_tokenizer, wrap_tokenizer, make_pretokenizer
 
 class XAYBZ:
     def __init__(self,
@@ -41,7 +40,7 @@ class XAYBZ:
                  include_punctuation=True,
                  include_pad=True,
                  include_unknown=True,
-                 include_bos=False,
+                 include_bos=True,
                  include_eos=False,
 
                  custom = None,
@@ -134,16 +133,17 @@ class XAYBZ:
 
         return "\n".join(lines) + "\n"
 
-    def save_as_jsonl(self, out_dir: str):
-        dataset_name = self.dataset_name
+    def save_as_jsonl(self, out_dir: str, dataset_name: str = None):
+        if dataset_name is None:
+            dataset_name = self.dataset_name
         root = Path(out_dir) / dataset_name
         root.mkdir(parents=True, exist_ok=True)
         for i, doc in enumerate(self.generated_document_list):
             group = self.generated_document_group_list[i]
             labels = self.generated_document_labels_list[i]
             assert len(doc) == len(labels), "Document and labels must have the same length"
-            out_path = root / f"Document:{i} Group:{group} Len:{len(doc)}.jsonl"
-            with out_path.open("w", encoding="utf-8") as f:
+            document_info_path = root / f"Document:{i} Group:{group} Len:{len(doc)}.jsonl"
+            with document_info_path.open("w", encoding="utf-8") as f:
                 for sent_id, (sentence, label) in enumerate(zip(doc, labels)):
                     row = {
                         "doc_id": i,
@@ -400,7 +400,7 @@ class XAYBZ:
                 use_whitespace=True
             )
         )
-        self.tokenizer = wrap_tokenizer(self.tokenizer)
+        self.tokenizer = wrap_tokenizer(self.tokenizer, bos_token="<bos>" if self.include_bos else None)
 
     def create_vocab_pair_list(self):
         # validate
@@ -764,3 +764,4 @@ class XAYBZ:
             self.generated_document_list = [sentences]
             self.generated_document_labels_list = [labels]
             self.generated_document_group_list = [group_label]
+

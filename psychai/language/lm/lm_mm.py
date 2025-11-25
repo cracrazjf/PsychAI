@@ -1,17 +1,14 @@
-from typing import Dict, Optional, List
-from torch import nn
-from transformers import PreTrainedTokenizerFast
-from psychai.nn_builder.io import from_pretrained, load_config, build_spec_from_config
-from psychai.nn_builder.nn_builder import CausalLMWrapper, Model
-from psychai.tokenizer.tokenizer import print_tokenizer
 import torch
 import gc
+from typing import Dict, Optional, List, Any
+from ...nn_builder import from_pretrained, load_config, build_spec_from_config, Model, CausalLMWrapper
+from ..tokenizer import print_tokenizer
 
 try:
     from transformers import (
-    AutoTokenizer, AutoConfig,
-    AutoModelForCausalLM,          # next-token LM
-    AutoModelForMaskedLM,          # BERT-style
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification,
 )
@@ -21,10 +18,8 @@ except Exception as e:
 
 class LM_ModelManager:
     def __init__(self):
-        self.model_name = None
         self.model = None
         self.tokenizer = None
-        self.task = None
 
     def load_model(self, 
                    model_name: str, 
@@ -32,32 +27,40 @@ class LM_ModelManager:
                    task: str = "causal_lm", 
                    custom: bool = False, 
                    *,
+                   random_seed = None,
+                   weight_init: Optional[Dict[str, Any]] = None,
                    tokenizer_path: Optional[str] = None, 
                    trust_remote_code: Optional[bool] = True, 
                    new_tokens: Optional[List[str]] = None, 
                    new_tokens_specials: Optional[Dict[str, str]] = None):
 
         self.free_memory()
-        self.model_name = model_name
-        self.task = task
+
         if custom:
-            if tokenizer_path is None:
-                raise ValueError("tokenizer_path is required when customized_model is True")
-            self.tokenizer, self.model = load_custom_model(model_path, tokenizer_path)
+            self.tokenizer, self.model = load_custom_model(model_name, 
+                                                           model_path, 
+                                                           tokenizer_path=tokenizer_path, 
+                                                           task=task, 
+                                                           random_seed=random_seed, 
+                                                           weight_init=weight_init)
         else:
-            self.tokenizer, self.model = load_hf_model(model_name, model_path, trust_remote_code, task, new_tokens, new_tokens_specials)
+            self.tokenizer, self.model = load_hf_model(model_name, 
+                                                       model_path, 
+                                                       trust_remote_code, 
+                                                       task, new_tokens, 
+                                                       new_tokens_specials)
 
     def free_memory(self) -> None:
         if hasattr(self, 'model') and self.model is not None:
             try:
                 del self.model
-                print("✅ Current model deleted")
+                print("Current model deleted")
             except Exception:
                 pass
         if hasattr(self, "tokenizer") and self.tokenizer is not None:
             try:
                 del self.tokenizer
-                print("✅ Current tokenizer deleted")
+                print("Current tokenizer deleted")
             except Exception:
                 pass
         gc.collect()
@@ -66,15 +69,17 @@ class LM_ModelManager:
         self.model_path = None
         self.tokenizer = None
         self.model_name = None
-        self.task = None
-        self.customized_model = None
-        print("✅ Cache cleared")
+        print("Cache cleared")
 
-def load_custom_model(model_path: str, tokenizer_path: str, task: str = "causal_lm"):
-    print(f"Loading model from {model_path} and tokenizer from {tokenizer_path}")
+def load_custom_model(model_name: str,
+                      model_path: str, 
+                      task: str = "causal_lm", 
+                      tokenizer_path: str = None,
+                      weight_init: Optional[Dict[str, Any]] = None,
+                      random_seed: int = None):
+    
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    print(f"Tokenizer loaded")
-    print_tokenizer(tokenizer)
+    # print_tokenizer(tokenizer)
 
     task_map = {
         "causal_lm": CausalLMWrapper
@@ -85,10 +90,37 @@ def load_custom_model(model_path: str, tokenizer_path: str, task: str = "causal_
     except Exception as e:
         print(e)
         print(f"Model not found, rebuilding model from config")
+        if random_seed is not None:
+            torch.manual_seed(random_seed)
         config = load_config(model_path)
         model = build_spec_from_config(config)  
         model = Model(model)
-    print(f"Model loaded")
+    
+        if weight_init is not None:
+            models_params = dict(model.named_parameters())
+            for param_name, init_info in weight_init.items():
+                if param_name not in models_params:
+                    raise ValueError(f"Parameter {param_name} not found in model parameters.")
+                param = models_params[param_name]
+                init_type = init_info[0]
+                if init_type == "uniform":
+                    limit = init_info[1]
+                    torch.nn.init.uniform_(param, -limit, limit)
+                    print(f"Initialized {param_name} with uniform distribution in [-{limit}, {limit}]")
+                elif init_type == "normal":
+                    mean = init_info[1]
+                    std = init_info[2]
+                    torch.nn.init.normal_(param, mean, std)
+                    print(f"Initialized {param_name} with normal distribution (mean={mean}, std={std})")
+                elif init_type == "kaiming_uniform":
+                    torch.nn.init.kaiming_uniform_(param, nonlinearity='relu')
+                    print(f"Initialized {param_name} with Kaiming uniform distribution")
+                elif init_type == "xavier_uniform":
+                    torch.nn.init.xavier_uniform_(param)
+                    print(f"Initialized {param_name} with Xavier uniform distribution")
+                else:
+                    raise ValueError(f"Unsupported initialization type: {init_type} for parameter {param_name}")
+            
     print(model.summary())
     model = ctor(model)
     print(f"Model wrapped with {ctor}")
@@ -105,14 +137,14 @@ def load_hf_model(model_name: str,
     if model_path is None:
         model_path = model_name
 
-    print(f"🚀 Loading model and tokenizer from {model_path}")
+    print(f"Loading model and tokenizer from {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code, use_fast=True)
     if new_tokens is not None:
         tokenizer.add_tokens(new_tokens)
         if new_tokens_specials is not None:
             tokenizer.add_special_tokens(new_tokens_specials)
         model.resize_token_embeddings(len(tokenizer))
-    print(f"😎 Tokenizer loaded")
+    print(f"Tokenizer loaded")
     print_tokenizer(tokenizer)
 
     task_map = {
@@ -126,9 +158,9 @@ def load_hf_model(model_name: str,
         raise ValueError(f"Unknown task: {task}")
 
     model = ctor.from_pretrained(model_path, trust_remote_code=trust_remote_code)
-    print(f"😎 Model loaded")
+    print(f"Model loaded")
     print_hf_model(model)
-    print(f"😶‍🌫️ Model wrapped with {ctor}")
+    print(f"Model wrapped with {ctor}")
     return tokenizer, model
 
 def print_hf_model(model):

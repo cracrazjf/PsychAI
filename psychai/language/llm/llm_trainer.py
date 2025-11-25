@@ -1,6 +1,6 @@
 from typing import Any, Tuple, Optional
 from datasets import Dataset, load_dataset
-from ..model_manager.llm import LLM_ModelManager
+from .llm_mm import LLM_ModelManager
 import os
 from trl import SFTTrainer, SFTConfig
 

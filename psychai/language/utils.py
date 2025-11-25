@@ -1,9 +1,8 @@
-import os, io, json, time, shutil, tempfile, random, sys, hashlib
-from typing import Optional, Dict, Any
+import os, io, json, time, shutil, tempfile, random, sys, hashlib, csv
+from pathlib import Path
+from typing import Union, Callable, Iterator, Dict, List, Any, Optional, TextIO
 import numpy as np
 import torch
-
-__all__ = ["save_checkpoint", "load_checkpoint", "to_serializable", "clean_dir"]
 
 try:
     from safetensors.torch import save_file as _save_safetensors
@@ -12,6 +11,113 @@ try:
 except Exception:
     _HAS_SAFETENSORS = False
 
+# Data utils for loading/saving datasets
+
+def _default_delimiter_for(path: str | Path, explicit: Optional[str]) -> str:
+    if explicit:
+        return explicit
+    p = Path(path)
+    if p.suffix == ".tsv" or "".join(p.suffixes[-2:]).endswith(".tsv.gz") or "".join(p.suffixes[-2:]).endswith(".tsv.zst"):
+        return "\t"
+    return ","
+
+def _open_text(path: str | Path, *, encoding: str = "utf-8", errors: str = "ignore") -> TextIO:
+    p = Path(path)
+    suffixes = "".join(p.suffixes[-2:])  # handle .jsonl.gz, .csv.zst, etc.
+
+    if suffixes.endswith(".gz"):
+        import gzip
+        return io.TextIOWrapper(gzip.open(p, "rb"), encoding=encoding, errors=errors)
+
+    if suffixes.endswith(".zst"):
+        if zstd is None:
+            raise RuntimeError("zstandard not installed; cannot read .zst files. Try `pip install zstandard`.")
+        fh = p.open("rb")
+        dctx = zstd.ZstdDecompressor()  # type: ignore
+        return io.TextIOWrapper(dctx.stream_reader(fh), encoding=encoding, errors=errors)
+
+    # Plain text
+    return p.open("r", encoding=encoding, errors=errors)
+
+def read_csv(
+    path: str | Path,
+    *,
+    delimiter: Optional[str] = None,
+    encoding: str = "utf-8",
+    errors: str = "ignore",
+    skip_blank: bool = True,
+) -> Iterator[Dict]:
+    delim = _default_delimiter_for(path, delimiter)
+    with _open_text(path, encoding=encoding, errors=errors) as f:
+        reader = csv.DictReader(f, delimiter=delim)
+        for row in reader:
+            if skip_blank and not any(v and str(v).strip() for v in row.values()):
+                continue
+            yield dict(row)
+
+def read_jsonl(
+    path: str | Path,
+    *,
+    encoding: str = "utf-8",
+    errors: str = "ignore",
+    skip_blank: bool = True,
+) -> Iterator[Dict]:
+    with _open_text(path, encoding=encoding, errors=errors) as f:
+        for i, line in enumerate(f):
+            if skip_blank and not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:  # pragma: no cover
+                raise ValueError(f"Invalid JSON on line {i+1} of {path}: {e}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(f"Line {i+1} of {path} is not a JSON object (got {type(obj).__name__}).")
+            yield obj
+
+def read_json(
+    path: str | Path,
+    *,
+    encoding: str = "utf-8",
+    errors: str = "ignore",
+) -> Iterator[Dict]:
+    with _open_text(path, encoding=encoding, errors=errors) as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as e:  # pragma: no cover
+            raise ValueError(f"Invalid JSON in {path}: {e}") from e
+
+    if isinstance(data, list):
+        for i, obj in enumerate(data):
+            if not isinstance(obj, dict):
+                raise ValueError(f"Element {i} in {path} is not a JSON object (got {type(obj).__name__}).")
+            yield obj
+    elif isinstance(data, dict):
+        yield data
+    else:
+        raise ValueError(f"Top-level value in {path} must be an object or array of objects (got {type(data).__name__}).")
+
+def stable_id(*parts: Any, digest_size: int = 16) -> str:
+    h = hashlib.blake2b(digest_size=digest_size)
+    for p in parts:
+        if isinstance(p, (bytes, bytearray)):
+            h.update(p)
+        else:
+            h.update(str(p).encode("utf-8", errors="ignore"))
+        h.update(b"|")
+    return h.hexdigest()
+
+def infer_file_type(path: str | Path) -> str:
+    ext = Path(path).suffix.lower()
+    if ext == ".csv":
+        return "csv"
+    elif ext == ".jsonl":
+        return "jsonl"
+    elif ext == ".json":
+        return "json"
+    else:
+        raise ValueError(f"Invalid file type: {ext}")
+
+# Train utils for saving/loading checkpoints
 def _atomic_write_bytes(dst_path: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, dir=os.path.dirname(dst_path)) as tmp:
