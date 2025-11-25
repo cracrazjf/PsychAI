@@ -7,7 +7,7 @@ PsychAI is a modular research framework for training and evaluating models (lang
 **From source**
 
 ```bash
-pip install "psychai @ git+https://github.com/cracrazjf/PsychAI.git"
+pip install --upgrade --force-reinstall --no-deps --no-cache-dir "psychai @ git+https://github.com/cracrazjf/PsychAI.git"
 ```
 
 ### Optional extras
