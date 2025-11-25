@@ -1,67 +1,40 @@
 ## PsychAI
 
-Framework for training and evaluating language models/optional audio/vision utilities for psychology research.
+PsychAI is a modular research framework for training and evaluating models (language-first, with optional extensions for LLM finetuning and vision pipelines).
 
-### Install
+### Installation
 
-- Stable:
-  - `pip install psychai`
-- From source:
-  - `pip install "psychai @ git+https://github.com/cracrazjf/PsychAI.git"`
+**From source**
 
-Optional extras:
-  - `pip install "psychai[audio,vision,unsloth] @ git+https://github.com/cracrazjf/PsychAI.git"`
-
-### Quickstart (Python API)
-
-```python
-from PsychAI.training import Trainer
-from PsychAI.config import TextTrainingConfig
-from PsychAI.data import load_csv_as_chat
-
-# Prepare data (chat format)
-train_conversations = load_csv_as_chat("train.csv", input_column="input", output_column="output")
-eval_conversations = load_csv_as_chat("eval.csv", input_column="input", output_column="output")
-
-config = TextTrainingConfig(
-    MODEL_NAME="meta-llama/Meta-Llama-3.1-8B-Instruct",
-    OUTPUT_DIR="./outputs/run1",
-    MAX_LENGTH=512,
-    NUM_EPOCHS=1,
-)
-
-trainer = Trainer(config)
-trainer.train(train_conversations, eval_conversations)
+```bash
+pip install "psychai @ git+https://github.com/cracrazjf/PsychAI.git"
 ```
 
-### CLI usage
+### Optional extras
 
-- Train:
-  - `psychai-train --data-name dataname --train-data data/train.json --eval-data data/eval.json --data-format chat --model-name modelname --model-ref meta-llama/Meta-Llama-3.1-8B-Instruct --output-dir outputs/run1 --unsloth`
-  - Common flags: `--epochs`, `--batch-size`, `--grad-accum-steps`, `--lr`, `--lora-rank`, `--lora-alpha`, `--lora-dropout`, `--no-lora`
+Install only what you need:
 
-- Interactive evaluation REPL:
-  - `psychai-evaluate` (lists local models/datasets if present, lets you chat/switch/benchmark/compare)
-  - Optional overrides: `--models-root /path/to/models` `--data-root /path/to/data`
+- `pip install "psychai[llm]"` → adds Unsloth/TRL/PEFT stack for LLM finetuning.
+- `pip install "psychai[vision]"` → adds Pillow/TorchVision/TIMM/Accelerate for multimodal or vision setups.
 
+You can combine extras, e.g. `pip install "psychai[llm,vision]"`.
 
-### Environment and caching
+### Local development
 
-Optionally set cache locations (default to `./data/...`):
-- `TRANSFORMERS_CACHE`, `HF_DATASETS_CACHE`, `HF_HOME`, `TORCH_HOME`
+```bash
+git clone https://github.com/cracrazjf/PsychAI.git
+cd PsychAI
+pip install -e .[dev]
+pytest
+```
 
-Hugging Face auth (if needed for gated models):
-- `export HF_TOKEN=...`
+`[dev]` can include your preferred tooling (formatters, linters, docs) when defined in `pyproject.toml`.
 
+### Basic usage
 
-### Contributing
+```python
+from psychai.language import make_pretokenizer, load_any
+from psychai.config import TrainingConfig
+```
 
-PRs welcome. Run linters/tests before submitting:
-- `pip install -e .[dev]`
-- `pytest -q`
-
-### License
-
-MIT
-
-
+See the examples directory and docstrings for feature-specific workflows.
