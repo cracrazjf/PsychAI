@@ -216,12 +216,12 @@ def load_config(load_dir: str) -> Dict[str, Any]:
 # --------- rebuild spec + model
 
 def build_spec_from_config(config: Dict[str, Any]):
-    from .nn_builder import ModelSpec
+    from .model import ModelSpec
 
     spec_dict = config["spec"]
     spec = ModelSpec(
         vocab_size=spec_dict.get("vocab_size"),
-        image_shape=tuple(spec_dict["image_shape"]) if spec_dict.get("image_shape") else None,
+        image_shape=tuple(spec_dict["image_shape"]) if spec_dict.get("image_shape") else None
     )
     for layer_spec in spec_dict["layers"]:
         # already has "name" and params
@@ -233,12 +233,12 @@ def from_pretrained(
     load_dir: str,
     *,
     strict: bool = True,
+    model_type: Optional[str] = None,
     map_location: Optional[Union[str, torch.device]] = None,
     torch_dtype: Optional[torch.dtype] = None,
     device: Optional[Union[str, torch.device]] = None,
 ) -> torch.nn.Module:
-    from .nn_builder import Model
-
+    from .model import Model
     # 1) Load config
     config = load_config(load_dir)
 
@@ -259,7 +259,7 @@ def from_pretrained(
         if os.path.exists(candidate):
             weights_path = candidate
     if weights_path is None:
-        raise FileNotFoundError(f"No weights file found under {load_dir}")
+        raise FileNotFoundError(f"No weights file found under {load_dir} and model_type not specified.")
 
     # 6) Load state_dict
     if weights_path.endswith(".safetensors"):

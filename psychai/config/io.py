@@ -41,6 +41,6 @@ def load_config(
             for p in parts[:-1]:
                 d = d.setdefault(p, {})
             d[parts[-1]] = value
-        cfg = update_dataclass(cfg, nested)
+        cfg = update_config(cfg, nested)
 
     return cfg

@@ -9,7 +9,7 @@ from .io import (
     from_pretrained
 )
 
-from .nn_builder import (
+from .model import (
     Model,
     ModelSpec,
     CausalLMWrapper,

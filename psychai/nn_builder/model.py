@@ -1,11 +1,13 @@
 from typing import Dict, Any, Tuple, Set
 import torch
 import torch.nn as nn
-from .layers import build_layer
+from .layer import build_layer
 
 
 class ModelSpec:
-    def __init__(self, vocab_size: int = None, image_shape: Tuple[int, int, int] = None):
+    def __init__(self, 
+                 vocab_size: int = None, 
+                 image_shape: Tuple[int, int, int] = None):
         self.vocab_size = vocab_size
         self.image_shape = image_shape
         self.layers_spec: list[dict] = []
@@ -14,15 +16,13 @@ class ModelSpec:
     def add_layer(self, layer_spec: Dict[str, Any], name: str = None):
         if "type" not in layer_spec:
             raise ValueError("layer_spec must include a 'type' key.")
+        
         spec = dict(layer_spec)
-
-        # add name of the layer if not provided
-        # the name is the type of the layer and the index of the layer
         if name is None:
             name = f"{layer_spec['type']}_{len(self.layers_spec)}"
-        # check if the name is already in the set
         if name in self.names:
             raise ValueError(f"Duplicate layer name: {name}")
+            
         self.names.add(name)
         spec["name"] = name
         self.layers_spec.append(spec)
@@ -55,13 +55,13 @@ class Model(nn.Module):
     def forward(self, 
                 inputs: dict, 
                 *,
-                state: dict | None = None, 
+                recurrent_state: dict | None = None, 
                 detach_state: bool = True, 
                 return_embeds: bool = False):
 
         embeds = {} if return_embeds else None
-        next_state = {} if state is not None else None
-        prev_state = state or {}
+        next_state = {} if recurrent_state is not None else None
+        prev_state = recurrent_state or {}
         
         for name in self.order:
             layer = self.layers[name]
@@ -69,7 +69,7 @@ class Model(nn.Module):
             merged_inputs = inputs if not layer_state else {**inputs, **layer_state}
             outputs = layer(merged_inputs)
             
-            if state is not None:
+            if recurrent_state is not None:
                 state_out = {}
                 if "last_hidden" in outputs:
                     state_out["last_hidden"] = outputs["last_hidden"]
@@ -84,7 +84,10 @@ class Model(nn.Module):
             inputs = outputs
 
             if return_embeds:
-                embeds[name] = outputs
+                cpu_embeds = {}
+                for key, value in outputs.items():  
+                    cpu_embeds[key] = value.cpu()
+                embeds[name] = cpu_embeds
 
         return inputs, next_state, embeds
 
@@ -94,7 +97,7 @@ class Model(nn.Module):
     def layer_names(self) -> list[str]:
         return list(self.order)
 
-    def get_weights(self) -> dict:
+    def get_weights(self, verbose=False) -> dict:
         weights = {}
         for name in self.layer_names():
             layer = self.get_layer(name)
@@ -126,22 +129,24 @@ class Model(nn.Module):
                 full_name_weights[full_name] = tensor
                 shape, numel, dtype = _get_shape_dtype(tensor)
                 rows.append((full_name, shape, numel, dtype))
-        headers = ("Layer.Param", "Shape", "#Params", "Dtype")
 
-        name_w = max(len(headers[0]), *(len(r[0]) for r in rows)) if rows else len(headers[0])
-        shape_w = max(len(headers[1]), *(len(str(r[1])) for r in rows)) if rows else len(headers[1])
-        num_w   = max(len(headers[2]), *(len(_commas(r[2])) for r in rows)) if rows else len(headers[2])
-        dtype_w = max(len(headers[3]), *(len(str(r[3])) for r in rows)) if rows else len(headers[3])
+        if verbose:
+            headers = ("Layer.Param", "Shape", "#Params", "Dtype")
 
-        line = f"{headers[0]:<{name_w}}  {headers[1]:<{shape_w}}  {headers[2]:>{num_w}}  {headers[3]:<{dtype_w}}"
-        sep  = "-" * len(line)
-        out_lines = [line, sep]
+            name_w = max(len(headers[0]), *(len(r[0]) for r in rows)) if rows else len(headers[0])
+            shape_w = max(len(headers[1]), *(len(str(r[1])) for r in rows)) if rows else len(headers[1])
+            num_w   = max(len(headers[2]), *(len(_commas(r[2])) for r in rows)) if rows else len(headers[2])
+            dtype_w = max(len(headers[3]), *(len(str(r[3])) for r in rows)) if rows else len(headers[3])
 
-        for name, shape, numel, dtype in rows:
-            out_lines.append(
-                f"{name:<{name_w}}  {str(shape):<{shape_w}}  {_commas(numel):>{num_w}}  {str(dtype):<{dtype_w}}"
-            )
-        print("\n".join(out_lines))
+            line = f"{headers[0]:<{name_w}}  {headers[1]:<{shape_w}}  {headers[2]:>{num_w}}  {headers[3]:<{dtype_w}}"
+            sep  = "-" * len(line)
+            out_lines = [line, sep]
+
+            for name, shape, numel, dtype in rows:
+                out_lines.append(
+                    f"{name:<{name_w}}  {str(shape):<{shape_w}}  {_commas(numel):>{num_w}}  {str(dtype):<{dtype_w}}"
+                )
+            print("\n".join(out_lines))
         return full_name_weights
 
     def summary(self) -> str:
@@ -186,22 +191,28 @@ class CausalLMWrapper(nn.Module):
                 input_ids: torch.Tensor, 
                 attention_mask: torch.Tensor | None = None, 
                 labels: torch.Tensor | None = None, 
-                state: dict | None = None, 
+                recurrent_state: dict | None = None, 
                 detach_state: bool = True, 
                 return_embeds: bool = False):
         
-        input_ids = input_ids[:, :-1]
-        attention_mask = attention_mask[:, :-1]
+        if labels is not None:
+            model_input_ids = input_ids[:, :-1]
+            if attention_mask is not None:
+                model_attention_mask = attention_mask[:, :-1]
+            else:
+                model_attention_mask = None
+        else:
+            model_input_ids = input_ids
+            model_attention_mask = attention_mask
 
-        out, next_state, embeds = self.base_model({"input_ids": input_ids, 
-                                                   "attention_mask": attention_mask},
-                                                    state=state,
+        out, next_state, embeds = self.base_model({"input_ids": model_input_ids, 
+                                                   "attention_mask": model_attention_mask},
+                                                    recurrent_state=recurrent_state,
                                                     detach_state=detach_state,
                                                     return_embeds=return_embeds)
         
         logits = out["logits"]
         loss = None
-        
         if labels is not None:
             labels = labels[:, 1:].contiguous()
             if labels.dtype != torch.long:
@@ -210,11 +221,14 @@ class CausalLMWrapper(nn.Module):
             loss = self.loss_fn(logits.view(-1, logits.size(-1)),
                                 labels.view(-1))
         else:
-            labels = None
+            labels = torch.tensor([], device=input_ids.device)
+            loss = torch.tensor(0.0, device=input_ids.device)
 
-        return {"loss": loss, 
+
+        return {"input_ids": model_input_ids,
+                "loss": loss, 
                 "logits": logits,
                 "labels": labels, 
-                "state": next_state, 
+                "recurrent_state": next_state, 
                 "embeds": embeds}
         

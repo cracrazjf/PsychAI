@@ -53,6 +53,24 @@ class Linear(Layer):
         return outputs
 
 
+@register_layer("layer_norm")
+class LayerNorm(Layer):
+    def __init__(self, normalized_shape: Union[int, Tuple[int, ...]], eps: float = 1e-5):
+        super().__init__()
+        self.ln = nn.LayerNorm(normalized_shape, eps=eps)
+
+    @property
+    def requires(self): return ("hidden", "embeddings")
+
+    @property
+    def provides(self): return ("hidden",)
+
+    def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        outputs = {}
+        outputs["hidden"] = self.ln(inputs.get("hidden", inputs.get("embeddings")))
+        return outputs
+
+
 @register_layer("embedding")
 class Embedding(Layer):
     def __init__(
@@ -98,9 +116,7 @@ class Embedding(Layer):
                 mask = inputs["attention_mask"].to(dtype=out.dtype, device=out.device)
                 mask = mask.unsqueeze(-1)
                 out = out * mask
-        outputs = {}
-        outputs["embeddings"] = out
-        return outputs
+        return {"embeddings": out}
 
 
 @register_layer("position_embedding")
@@ -108,29 +124,12 @@ class PositionEmbedding(Layer):
     def __init__(
         self,
         embed_size: int,
-        block_size: int = 2048,
-        kind: str = "learned",
-        dropout: float = 0.0,
+        block_size: int = 2048
     ):
         super().__init__()
-        assert kind in ("learned", "fixed"), "kind must be 'learned' or 'fixed'"
         self.embed_size = embed_size
         self.block_size = block_size
-        self.kind = kind
-        self.drop = nn.Dropout(dropout) if dropout and dropout > 0 else nn.Identity()
-
-        if self.kind == "learned":
-            self.pos_embed = nn.Embedding(block_size, embed_size)
-        else:
-            # Build sinusoidal table once and register as buffer: (max_pos, H)
-            pe = torch.zeros(block_size, embed_size)
-            position = torch.arange(0, block_size, dtype=torch.float32).unsqueeze(1)  # (max_pos,1)
-            div_term = torch.exp(
-                torch.arange(0, embed_size, 2, dtype=torch.float32) * (-torch.log(torch.tensor(10000.0)) / embed_size)
-            )  # (H/2,)
-            pe[:, 0::2] = torch.sin(position * div_term)
-            pe[:, 1::2] = torch.cos(position * div_term)
-            self.register_buffer("pos_buffer", pe, persistent=False)  # not saved as parameter
+        self.emb = nn.Embedding(block_size, embed_size)
 
     @property
     def requires(self):
@@ -151,21 +150,11 @@ class PositionEmbedding(Layer):
                 f"Sequence length {T} exceeds block size {self.block_size}."
             )
 
-        # Position ids: (B,T)
-        if "position_ids" in inputs:
-            pos_ids = inputs["position_ids"]
-            if pos_ids.dim() == 1:
-                pos_ids = pos_ids.unsqueeze(0).expand(B, T)  # (T,) -> (B,T)
-        else:
-            pos_ids = torch.arange(T, device=h.device).unsqueeze(0).expand(B, T)  # (B,T)
+        pos_ids = torch.arange(0, T, dtype=torch.long, device=h.device)
+        
+        pos = self.emb(pos_ids)
 
-        # Get positional encodings: (B,T,H)
-        if self.kind == "learned":
-            pos = self.pos_embed(pos_ids)  # (B,T,H)
-        else:
-            pos = self.pos_buffer.index_select(0, pos_ids.reshape(-1)).view(B, T, H).to(h.dtype)  # (B,T,H)
-
-        return {"embeddings": self.drop(h + pos)}
+        return {"embeddings": h + pos}
 
 
 @register_layer("causal_self_attention")
@@ -175,34 +164,27 @@ class CausalSelfAttention(Layer):
         block_size: int,
         embed_size: int,
         num_heads: int,
-        head_dim: Optional[int] = None,
-        bias: bool = True,
-        dropout = 0.0,
+        head_dim: Optional[int] = None
     ):
         super().__init__()
         if head_dim is None:
             if embed_size % num_heads != 0:
-                raise ValueError(f"hidden_size ({embed_size}) must be divisible by num_heads ({num_heads}) "
+                raise ValueError(f"embed_size ({embed_size}) must be divisible by num_heads ({num_heads}) "
                                  "when head_dim is not provided.")
             head_dim = embed_size // num_heads
         if embed_size != num_heads * head_dim:
-            raise ValueError(f"hidden_size ({embed_size}) must equal num_heads * head_dim "
+            raise ValueError(f"embed_size ({embed_size}) must equal num_heads * head_dim "
                              f"({num_heads} * {head_dim} = {num_heads * head_dim}).")
 
         self.embed_size = embed_size
         self.num_heads = num_heads
         self.block_size = block_size
         self.head_dim = head_dim
-        self.dropout = dropout
 
-        self.attn_dropout = nn.Dropout(dropout)
-        self.resid_dropout = nn.Dropout(dropout)
+        self.c_attn = nn.Linear(embed_size, 3 * embed_size)
 
-        self.w_qkv = nn.Linear(embed_size, 3 * embed_size, bias=bias)
-
-        self.c_proj = nn.Linear(embed_size, embed_size, bias=bias)
-        nn.init.zeros_(self.c_proj.weight)
-        nn.init.zeros_(self.c_proj.bias)
+        self.c_proj = nn.Linear(embed_size, embed_size)
+        self.c_proj.NANOGPT_SCALE_INIT = 1
 
         self.flash = hasattr(nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -213,42 +195,35 @@ class CausalSelfAttention(Layer):
 
     @property
     def requires(self):
-        return ("embeddings",)
+        return ("embeddings", "hidden")
 
     @property
     def provides(self):
         return ("hidden",)
 
-    def _reshape_to_heads(self, x: torch.Tensor) -> torch.Tensor:
-
-        B, T, H = x.shape
-        x = x.view(B, T, self.num_heads, self.head_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()
-        return x
-
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        h = inputs.get("embeddings")
+        h = inputs.get("embeddings", inputs.get("hidden"))
 
         B, T, H = h.shape
         if H != self.embed_size:
             raise ValueError(f"QKVProjectionLayer: last dim of hidden ({H}) != hidden_size ({self.embed_size}).")
 
-        qkv = self.w_qkv(h)
-        q, k, v = torch.chunk(qkv, 3, dim=-1)
-        q = self._reshape_to_heads(q)
-        k = self._reshape_to_heads(k)
-        v = self._reshape_to_heads(v)
+        qkv = self.c_attn(h)
+
+        q, k, v = qkv.split(self.embed_size, dim=2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         
         if self.flash:
-            y = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            y = nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
         else:
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
             y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, H)
-        y = self.resid_dropout(self.c_proj(y))
+        y = self.c_proj(y)
 
         return {"hidden": y}
 
@@ -260,27 +235,24 @@ class MLP(Layer):
         embed_size: int,
         expansion: int = 4,
         nonlinearity: str = "gelu",
-        dropout: float = 0.0,
-        bias: bool = True,
+        approximate: str = "tanh"
     ):
         super().__init__()
         inter = embed_size * int(expansion)
         # Linear layers (use your LinearLayer primitive)
-        self.fc1 = nn.Linear(embed_size, inter, bias=bias)
-        self.fc2 = nn.Linear(inter, embed_size, bias=bias)
+        self.c_fc = nn.Linear(embed_size, inter)
+        self.c_proj = nn.Linear(inter, embed_size)
+        self.c_proj.NANOGPT_SCALE_INIT = 1
 
         # Activation layer (use your registered activation layers)
         if nonlinearity == "relu":
             self.act = nn.ReLU()
         elif nonlinearity == "gelu":
-            self.act = nn.GELU()
+            self.act = nn.GELU(approximate="tanh")
         elif nonlinearity == "tanh":
             self.act = nn.Tanh()
         elif nonlinearity == "sigmoid":
             self.act = nn.Sigmoid()
-
-        # Dropouts
-        self.drop1 = nn.Dropout(dropout) if dropout and dropout > 0 else nn.Identity()
 
     @property
     def requires(self): 
@@ -292,13 +264,10 @@ class MLP(Layer):
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         x = inputs["hidden"]
-        x = self.fc1(x)
+        x = self.c_fc(x)
         x = self.act(x)
-        x = self.fc2(x)
-        x = self.drop1(x)
-        outputs = {}
-        outputs["hidden"] = x
-        return outputs
+        x = self.c_proj(x)
+        return {"hidden": x}
 
 
 @register_layer("decoder_block")
@@ -306,24 +275,18 @@ class DecoderBlock(Layer):
     def __init__(self, 
                  block_size: int,
                  embed_size: int,
-                 num_heads: int = 8, 
-                 bias: bool = True,
-                 dropout: float = 0.0,
+                 num_heads: int = 8,
                  activation: str = "gelu",
                  expansion: int = 4):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(normalized_shape=embed_size, elementwise_affine=bias)
-        self.ln_2 = nn.LayerNorm(normalized_shape=embed_size, elementwise_affine=bias)
-        self.attention = CausalSelfAttention(embed_size=embed_size, 
-                                            num_heads=num_heads, 
-                                            block_size=block_size, 
-                                            bias=bias, 
-                                            dropout=dropout)
+        self.ln_1 = nn.LayerNorm(normalized_shape=embed_size)
+        self.ln_2 = nn.LayerNorm(normalized_shape=embed_size)
+        self.attn = CausalSelfAttention(embed_size=embed_size, 
+                                        num_heads=num_heads, 
+                                        block_size=block_size)
         self.mlp = MLP(embed_size=embed_size, 
                         expansion=expansion, 
-                        nonlinearity=activation, 
-                        dropout=dropout, 
-                        bias=bias)
+                        nonlinearity=activation)
     
     @property
     def requires(self): 
@@ -336,7 +299,7 @@ class DecoderBlock(Layer):
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         x = inputs.get("embeddings", inputs.get("hidden"))
         x_norm = self.ln_1(x)
-        att_out = self.attention({"embeddings": x_norm})["hidden"]
+        att_out = self.attn({"embeddings": x_norm})["hidden"]
         x = x + att_out
 
         # Pre-norm MLP: x = x + MLP(LN(x))
@@ -518,7 +481,10 @@ class Jordan(Layer):
 
 @register_layer("lm_head")
 class LMHead(Layer):
-    def __init__(self, embed_size: int, vocab_size: int, bias: bool = True):
+    def __init__(self, 
+                 embed_size: int, 
+                 vocab_size: int, 
+                 bias: bool = True):
         super().__init__()
         self.proj = nn.Linear(embed_size, vocab_size, bias=bias)
 

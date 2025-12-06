@@ -129,7 +129,7 @@ def make_pretokenizer(
     # --- user extra rules ---
     if custom_splits:
         for pat, behavior in custom_splits:
-            steps.append(pre.Split(pat, behavior=behavior, regex=True))
+            steps.append(pre.Split(pat, behavior=behavior))
 
     # return composite
     if not steps:
@@ -142,13 +142,13 @@ def train_tokenizer(
     *,
     model_type: str = "bpe", 
     files: list[str],                   
-    vocab_size: int = 32000,
-    min_frequency: int = 2,
+    vocab_size: int = 999999999,
+    min_frequency: int = 1,
     normalizer: Optional[norm.Normalizer] = None,
     pretokenizer: Optional[pre.PreTokenizer] = None,
     decoder_type: str = "metaspace",
     decoder_kwargs: dict = {},
-    special_tokens: list[str] = ["<unk>", "<pad>", "<bos>", "<eos>"],
+    special_tokens: list[str] = ["<unk>", "<pad>"],
     protected_terms: list[str] = []
 ):
     if model_type == "bpe":
@@ -176,6 +176,7 @@ def train_tokenizer(
     elif model_type == "wordlevel":
         model = WordLevel(unk_token="<unk>")
         trainer = WordLevelTrainer(
+            vocab_size=vocab_size,
             special_tokens=list(special_tokens),
             min_frequency=min_frequency,
         )
@@ -206,7 +207,7 @@ def train_tokenizer(
         tok.decoder = decoders.WordPiece(prefix=prefix)
     else:
         raise ValueError(f"Unknown decoder_type: {decoder_type}")
-
+    
     return tok
 
 def create_custom_tokenizer(vocab: Dict[str, int], pretokenizer: Optional[pre.PreTokenizer] = None):
@@ -241,8 +242,8 @@ def print_tokenizer(tokenizer):
     print("Vocab size:", len(v2i))
 
     # print in id order
-    for tok, idx in sorted(v2i.items(), key=lambda kv: kv[1]):
-        print(f"{idx:5d}  {tok}")
+    # for tok, idx in sorted(v2i.items(), key=lambda kv: kv[1]):
+    #     print(f"{idx:5d}  {tok}")
 
     # special tokens
     print("\nSpecial tokens map:", tokenizer.special_tokens_map)        # names -> tokens
