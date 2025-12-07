@@ -9,6 +9,9 @@ class ModelConfig:
     path: str = None
     tokenizer_path: str = None
     trust_remote_code: bool = False
+    max_seq_length: int = 512
+    dtype: str = None
+    load_in_4bit: bool = True
 
     # model architecture parameters
     num_layers: int = 0
@@ -72,6 +75,7 @@ class EvaluationConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     # generic metadata fields
+    root_dir: str = "./"
     exp_name: str = "default_experiment"
     exp_dir: str = None
     device: str = "cpu"

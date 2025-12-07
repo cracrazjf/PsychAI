@@ -10,7 +10,7 @@ except ImportError:
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
-class LLM_ModelManager:
+class ModelManager:
     def __init__(self):
         self.model = None
         self.model_name = None
