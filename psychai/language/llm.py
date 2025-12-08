@@ -222,7 +222,6 @@ class TrainingManager:
             b_idx, t_idx = attention_mask.nonzero(as_tuple=True)
 
             for bi, ti in zip(b_idx.tolist(), t_idx.tolist()):
-                print(ti)
                 token_id = int(input_ids[bi, ti])
                 token_entry = {
                     "token_id": token_id,
