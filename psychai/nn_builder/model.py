@@ -86,7 +86,7 @@ class Model(nn.Module):
             if return_embeds:
                 cpu_embeds = {}
                 for key, value in outputs.items():  
-                    cpu_embeds[key] = value.cpu()
+                    cpu_embeds[key] = value
                 embeds[name] = cpu_embeds
 
         return inputs, next_state, embeds

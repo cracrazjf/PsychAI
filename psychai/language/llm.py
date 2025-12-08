@@ -226,7 +226,7 @@ class TrainingManager:
 
                 token_entry = {
                     "token_id": token_id,
-                    "embedding": embeddings[bi, ti, :].detach(),
+                    "embedding": embeddings[bi, ti, :].detach().cpu(),
                 }
                 embeddings_list[bi].append(token_entry)
             return embeddings_list
