@@ -1,12 +1,13 @@
-import torch
-import gc
-from typing import Tuple, Optional, Any, List
 try:
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
     UNSLOTH_AVAILABLE = True
 except ImportError:
     UNSLOTH_AVAILABLE = False
+    
+import torch
+import gc
+from typing import Tuple, Optional, Any, List
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
