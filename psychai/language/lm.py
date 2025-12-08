@@ -358,6 +358,7 @@ class TrainingManager:
 
                 token_entry = {
                     "token_id": token_id,
+                    "token_str": self.mm.tokenizer.decode([token_id]),
                     "embedding": embeddings[bi, ti].detach().cpu(),
                 }
                 embeddings_list[bi].append(token_entry)
@@ -394,10 +395,10 @@ class TrainingManager:
                     logits = outputs["logits"]
                     preds = torch.argmax(logits, dim=-1)
 
-                    inputs_per_batch.append(outputs["input_ids"].cpu().numpy())
-                    labels_per_batch.append(outputs["labels"].cpu().numpy())
-                    logits_per_batch.append(logits.cpu().numpy())
-                    preds_per_batch.append(preds.cpu().numpy())
+                    inputs_per_batch.append(outputs["input_ids"].cpu())
+                    labels_per_batch.append(outputs["labels"].cpu())
+                    logits_per_batch.append(logits.cpu())
+                    preds_per_batch.append(preds.cpu())
 
                     if self.cfg.logging.return_embeddings:
                         embedding_maps.append(_collect_embeddings(batch["input_ids"], 
