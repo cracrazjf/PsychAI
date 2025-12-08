@@ -256,12 +256,12 @@ class TrainingManager:
                     
                     logits = outputs["logits"]
                     preds = torch.argmax(logits, dim=-1)
-                    inputs_per_batch.append(batch["input_ids"].cpu().numpy())
+                    inputs_per_batch.append(batch["input_ids"].cpu())
                     if labels is not None:
-                        labels_per_batch.append(outputs["labels"].cpu().numpy())
-                    logits_per_batch.append(logits.cpu().numpy())
+                        labels_per_batch.append(outputs["labels"].cpu())
+                    logits_per_batch.append(logits.cpu())
                     assert logits.shape[1] == input_ids.shape[1], "Logits and input_ids sequence length mismatch"
-                    preds_per_batch.append(preds.cpu().numpy())
+                    preds_per_batch.append(preds.cpu())
                     if self.cfg.logging.return_embeddings:
                         batch_embeddings = _collect_embeddings(
                             input_ids,
