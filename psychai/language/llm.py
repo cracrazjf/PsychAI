@@ -201,14 +201,8 @@ class TrainingManager:
                  epoch: Optional[int], 
                  step: Optional[int] = 0, 
                  eval_path: Optional[str] = None):
-        
-        for batch in dataloader:
-            print(f"Attention mask after entering model: {batch['attention_mask']}")
         device = next(self.mm.model.parameters()).device
-        if UNSLOTH_AVAILABLE:
-            FastLanguageModel.for_inference(self.mm.model)
-        else:
-            self.mm.model.eval()
+        self.mm.model.eval()
 
         preds_per_batch = []
         labels_per_batch = []
@@ -220,7 +214,6 @@ class TrainingManager:
         def _collect_embeddings(input_ids, attention_mask, embeddings):
             batch_size = input_ids.shape[0]
             embeddings_list = [[] for _ in range(batch_size)]
-            print(attention_mask)
             b_idx, t_idx = attention_mask.nonzero(as_tuple=True)
 
             for bi, ti in zip(b_idx.tolist(), t_idx.tolist()):
