@@ -218,16 +218,15 @@ class TrainingManager:
         def _collect_embeddings(input_ids, attention_mask, embeddings):
             batch_size = input_ids.shape[0]
             embeddings_list = [[] for _ in range(batch_size)]
-
             b_idx, t_idx = attention_mask.nonzero(as_tuple=True)
 
             for bi, ti in zip(b_idx.tolist(), t_idx.tolist()):
                 token_id = int(input_ids[bi, ti])
-
                 token_entry = {
                     "token_id": token_id,
                     "embedding": embeddings[bi, ti, :].detach().cpu(),
                 }
+                print(self.mm.tokenizer.decode([token_id]))
                 embeddings_list[bi].append(token_entry)
             return embeddings_list
 
