@@ -239,6 +239,7 @@ class TrainingManager:
                   ncols=100,
                 ) as eval_bar:
             for i, batch in enumerate(dataloader):
+                print(batch["attention_mask"])
                 with torch.inference_mode():
                     input_ids = batch["input_ids"].to(device)
                     attention_mask = batch["attention_mask"].to(device)
