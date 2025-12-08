@@ -358,17 +358,8 @@ class TrainingManager:
 
                 token_entry = {
                     "token_id": token_id,
-                    "layers": {}
+                    "embedding": embeddings[bi, ti].detach(),
                 }
-                for layer_name, layer_repr in embeddings.items():
-                    layer_bucket = {}
-                    for key, tensor in layer_repr.items():
-                        if isinstance(tensor, tuple):
-                            vec = tuple(t[bi, ti].detach() for t in tensor)
-                        else:
-                            vec = tensor[bi, ti].detach()
-                        layer_bucket[key] = vec
-                    token_entry["layers"][layer_name] = layer_bucket
                 embeddings_list[bi].append(token_entry)
             return embeddings_list
         
@@ -411,7 +402,7 @@ class TrainingManager:
                     if self.cfg.logging.return_embeddings:
                         embedding_maps.append(_collect_embeddings(batch["input_ids"], 
                                                                   batch["attention_mask"], 
-                                                                  outputs["embeds"]))
+                                                                  outputs["embeds"][self.cfg.layer_of_interest][self.cfg.embed_type]))
 
                     eval_bar.update(1)
                     eval_bar.set_postfix({"loss": f"{eval_loss / (i + 1):.4f}"})

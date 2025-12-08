@@ -185,3 +185,115 @@ class ModelManager:
             use_rslora=use_rslora,
             loftq_config=loftq_config,
         )
+    
+class TrainingManager:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.mm = ModelManager()
+
+    def evaluate(self, 
+                 dataloader: DataLoader, 
+                 eval_fn: Optional[Any], 
+                 epoch: Optional[int], 
+                 step: Optional[int] = 0, 
+                 eval_path: Optional[str] = None):
+        
+        device = next(self.mm.model.parameters()).device
+        if UNSLOTH_AVAILABLE:
+            FastLanguageModel.for_inference(self.mm.model)
+        else:
+            self.mm.model.eval()
+
+        preds_per_batch = []
+        labels_per_batch = []
+        inputs_per_batch = []
+        logits_per_batch = []
+        weights = {}
+        embedding_maps = []
+
+        def _collect_embeddings(input_ids, attention_mask, embeddings):
+            batch_size = input_ids.shape[0]
+            embeddings_list = [[] for _ in range(batch_size)]
+
+            b_idx, t_idx = attention_mask.nonzero(as_tuple=True)
+
+            for bi, ti in zip(b_idx.tolist(), t_idx.tolist()):
+                token_id = int(input_ids[bi, ti])
+
+                token_entry = {
+                    "token_id": token_id,
+                    "embedding": embeddings[bi, ti, :].detach(),
+                }
+                embeddings_list[bi].append(token_entry)
+            return embeddings_list
+
+        eval_loss = 0
+        with tqdm(total=len(dataloader),
+                  desc=f"Evaluating",
+                  position=1,
+                  leave=True,
+                  ncols=100,
+                ) as eval_bar:
+            for i, batch in enumerate(dataloader):
+                with torch.inference_mode():
+                    input_ids = batch["input_ids"].to(device)
+                    attention_mask = batch["attention_mask"].to(device)
+                    labels = batch.get("labels", None)
+                    if labels is not None:
+                        labels = labels.to(device)
+                    
+                    outputs = self.mm.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        labels=labels, 
+                        return_dict=True,
+                        output_logits=True,
+                        output_hidden_states=self.cfg.logging.return_embeddings)
+                    
+                    logits = outputs["logits"]
+                    preds = torch.argmax(logits, dim=-1)
+                    inputs_per_batch.append(batch["input_ids"].cpu().numpy())
+                    if labels is not None:
+                        labels_per_batch.append(outputs["labels"].cpu().numpy())
+                    logits_per_batch.append(logits.cpu().numpy())
+                    assert logits.shape[1] == input_ids.shape[1], "Logits and input_ids sequence length mismatch"
+                    preds_per_batch.append(preds.cpu().numpy())
+                    if self.cfg.logging.return_embeddings:
+                        batch_embeddings = _collect_embeddings(
+                            input_ids,
+                            attention_mask,
+                            outputs["hidden_states"][self.cfg.layer_of_interest]
+                        )
+                        embedding_maps.append(batch_embeddings)
+
+                    eval_bar.update(1)
+                    eval_bar.set_postfix({"loss": f"{eval_loss / (i + 1):.4f}"})
+            
+            eval_info = {"epoch": epoch + 1, "step": step, "eval_loss": eval_loss / len(dataloader)}
+
+            if eval_fn is not None:
+                eval_bar.clear()
+                eval_result = eval_fn(self.mm, 
+                                      self.cfg, 
+                                      inputs_per_batch, 
+                                      labels_per_batch, 
+                                      logits_per_batch, 
+                                      preds_per_batch, 
+                                      embeddings_per_batch, 
+                                      weights)
+                eval_bar.refresh()
+
+                assert isinstance(eval_result, dict), "eval_fn must return a dict"
+
+                tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
+                                                
+                for key, value in eval_result.items():
+                    if isinstance(value, dict):
+                        for k, v in value.items():
+                            value[k] = to_serializable(v)
+                    eval_info[key] = to_serializable(value)
+
+                if eval_path is not None:
+                    with open(eval_path, "a") as f:
+                        f.write(json.dumps(eval_info) + "\n")
+

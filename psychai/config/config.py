@@ -81,7 +81,7 @@ class EvaluationConfig:
     device: str = "cpu"
     task: str = "causal_lm"
     bp_method: str = "continuous"
-    layer_type: str = "all"
+    layer_of_interest: int | str = 0
     embed_type: str = "embeddings"
 
     # helpers
