@@ -283,7 +283,7 @@ class TrainingManager:
                                       labels_per_batch, 
                                       logits_per_batch, 
                                       preds_per_batch, 
-                                      embeddings_per_batch, 
+                                      embedding_maps, 
                                       weights)
                 eval_bar.refresh()
 
