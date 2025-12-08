@@ -224,9 +224,9 @@ class TrainingManager:
                 token_id = int(input_ids[bi, ti])
                 token_entry = {
                     "token_id": token_id,
+                    "token_str": self.mm.tokenizer.decode([token_id]),
                     "embedding": embeddings[bi, ti, :].detach().cpu(),
                 }
-                print(self.mm.tokenizer.decode([token_id]))
                 embeddings_list[bi].append(token_entry)
             return embeddings_list
 
