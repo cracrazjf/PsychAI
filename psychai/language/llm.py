@@ -202,6 +202,8 @@ class TrainingManager:
                  step: Optional[int] = 0, 
                  eval_path: Optional[str] = None):
         
+        for batch in dataloader:
+            print(f"Attention mask after entering model: {batch['attention_mask']}")
         device = next(self.mm.model.parameters()).device
         if UNSLOTH_AVAILABLE:
             FastLanguageModel.for_inference(self.mm.model)
@@ -239,7 +241,6 @@ class TrainingManager:
                   ncols=100,
                 ) as eval_bar:
             for i, batch in enumerate(dataloader):
-                print(f"Attention mask after entering model: {batch['attention_mask']}")
                 with torch.inference_mode():
                     input_ids = batch["input_ids"].to(device)
                     attention_mask = batch["attention_mask"].to(device)
