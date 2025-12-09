@@ -107,11 +107,11 @@ def load_any_as_chat(
                     parts.append(f"Question: {question}")
                 if constraint:
                     parts.append(f"Constraint: {constraint}")
-                input_text = "\n".join(parts)
+                input_text = "\n\n".join(parts)
             elif stype == "natural":
                 s = input_text.strip()
                 if question: s += f"\n\n{question}"
-                if constraint: s += f"\n{constraint}"
+                if constraint: s += f"\n\n{constraint}"
                 input_text = s
             else:
                 raise ValueError(f"Invalid stype: {stype}, must be 'labeled' or 'natural'")

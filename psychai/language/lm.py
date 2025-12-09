@@ -435,34 +435,47 @@ class TrainingManager:
 
                 return eval_result
 
-    def generate(self, prompt: str, max_length: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
+    def generate(self, prompt: str | torch.Tensor, max_new_tokens: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
-
-        input_ids = self.mm.tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt").to(device)
+        if isinstance(prompt, torch.Tensor):
+            input_ids = prompt.to(device)
+        else:
+            input_ids = self.mm.tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt").to(device)
 
         generated = input_ids
         logits_list = []
         with torch.no_grad():
-            for _ in range(max_length):
-                outputs = self.mm.model.forward(input_ids=generated)
+            for _ in range(max_new_tokens):
+                outputs = self.mm.model(input_ids=generated)
                 logits = outputs["logits"]
-                next_token_logits = logits[:, -1, :] / temperature
+                next_token_logits = logits[:, -1, :]
+
+                if temperature is not None and temperature > 0.0 and temperature != 1.0:
+                    next_token_logits = next_token_logits / temperature
+
                 if return_logits:
                     logits_list.append(next_token_logits.clone().cpu().numpy())
-                probabilities = torch.softmax(next_token_logits, dim=-1)
-                if top_k <= 0:
-                    next_token = torch.multinomial(probabilities, num_samples=1, replacement=True)
-                    generated = torch.cat((generated, next_token), dim=1)
-                else:
-                    top_k_probs, top_k_indices = torch.topk(probabilities, top_k, dim=-1)
-                    next_token = torch.multinomial(top_k_probs, num_samples=1, replacement=True)
-                    next_token = top_k_indices.gather(-1, next_token)
-                    generated = torch.cat((generated, next_token), dim=1)
 
-        output_tokens = generated[0, :max_length].cpu().numpy().tolist()
-        decoded_text = self.mm.tokenizer.decode(output_tokens, skip_special_tokens=True)
-        return decoded_text, logits_list if return_logits else decoded_text
+                if top_k is None or top_k <= 0:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                else:
+                    probs = torch.softmax(next_token_logits, dim=-1)
+                    k = min(top_k, probs.size(-1))
+                    top_k_probs, top_k_indices = torch.topk(probs, k, dim=-1)
+                    sampled_idx_in_topk = torch.multinomial(top_k_probs, num_samples=1)
+                    next_token = top_k_indices.gather(-1, sampled_idx_in_topk)
+                generated = torch.cat((generated, next_token), dim=1)
+
+        output_tokens = generated.cpu()
+        decoded_text = [
+                        self.mm.tokenizer.decode(seq.tolist(), skip_special_tokens=True)
+                        for seq in output_tokens
+                    ]
+        if return_logits:
+            return decoded_text, logits_list
+        else:
+            return decoded_text
 
     def train(self, weight_init_fn=None , eval_fn=None):
         for run in range(self.cfg.num_runs):
