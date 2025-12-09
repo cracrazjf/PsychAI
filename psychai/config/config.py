@@ -62,6 +62,8 @@ class LoggingConfig:
     return_logits: bool = False
     return_weights: bool = False
     return_embeddings: bool = False
+    layer_of_interest: int | str = 0
+    embed_type: str = "embeddings"
     
     metric_for_best_model: str = None
     save_total_limit: int = 5
@@ -81,9 +83,6 @@ class EvaluationConfig:
     device: str = "cpu"
     task: str = "causal_lm"
     bp_method: str = "continuous"
-    layer_of_interest: int | str = 0
-    embed_type: str = "embeddings"
-
     # helpers
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

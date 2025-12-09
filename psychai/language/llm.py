@@ -261,7 +261,7 @@ class TrainingManager:
                         batch_embeddings = _collect_embeddings(
                             input_ids,
                             attention_mask,
-                            outputs["hidden_states"][self.cfg.layer_of_interest]
+                            outputs["hidden_states"][self.cfg.logging.layer_of_interest]
                         )
                         embedding_maps.append(batch_embeddings)
 
@@ -281,18 +281,18 @@ class TrainingManager:
                                       embedding_maps, 
                                       weights)
                 eval_bar.refresh()
+                
+                if isinstance(eval_result, dict):
+                    if "accuracy" in eval_result:
+                        tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
+                    for key, value in eval_result.items():
+                        if isinstance(value, dict):
+                            for k, v in value.items():
+                                value[k] = to_serializable(v)
+                        eval_info[key] = to_serializable(value)
+                    if eval_path is not None:
+                        with open(eval_path, "a") as f:
+                            f.write(json.dumps(eval_info) + "\n")
 
-                assert isinstance(eval_result, dict), "eval_fn must return a dict"
-
-                tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
-                                                
-                for key, value in eval_result.items():
-                    if isinstance(value, dict):
-                        for k, v in value.items():
-                            value[k] = to_serializable(v)
-                    eval_info[key] = to_serializable(value)
-
-                if eval_path is not None:
-                    with open(eval_path, "a") as f:
-                        f.write(json.dumps(eval_info) + "\n")
+                return eval_result
 

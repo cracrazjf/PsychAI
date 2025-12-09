@@ -403,7 +403,7 @@ class TrainingManager:
                     if self.cfg.logging.return_embeddings:
                         embedding_maps.append(_collect_embeddings(batch["input_ids"], 
                                                                   batch["attention_mask"], 
-                                                                  outputs["embeds"][self.cfg.layer_of_interest][self.cfg.embed_type]))
+                                                                  outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type]))
 
                     eval_bar.update(1)
                     eval_bar.set_postfix({"loss": f"{eval_loss / (i + 1):.4f}"})
@@ -421,21 +421,19 @@ class TrainingManager:
                                       embedding_maps, 
                                       weights)
                 eval_bar.refresh()
+                if isinstance(eval_result, dict):
+                    if "accuracy" in eval_result:
+                        tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
+                    for key, value in eval_result.items():
+                        if isinstance(value, dict):
+                            for k, v in value.items():
+                                value[k] = to_serializable(v)
+                        eval_info[key] = to_serializable(value)
+                    if eval_path is not None:
+                        with open(eval_path, "a") as f:
+                            f.write(json.dumps(eval_info) + "\n")
 
-                assert isinstance(eval_result, dict), "eval_fn must return a dict"
-
-                if "accuracy" in eval_result:
-                    tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
-                                                
-                for key, value in eval_result.items():
-                    if isinstance(value, dict):
-                        for k, v in value.items():
-                            value[k] = to_serializable(v)
-                    eval_info[key] = to_serializable(value)
-
-                if eval_path is not None:
-                    with open(eval_path, "a") as f:
-                        f.write(json.dumps(eval_info) + "\n")
+                return eval_result
 
     def generate(self, prompt: str, max_length: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
         device = next(self.mm.model.parameters()).device
