@@ -72,6 +72,14 @@ class ModelManager:
                 target_modules=target_modules
             )
 
+    def choose_chat_template(self):
+        if not UNSLOTH_AVAILABLE:
+            raise ImportError("Unsloth library is not available. Chat templates cannot be used.")
+        if "llama" in self.model_type:
+            self.tokenizer = get_chat_template(self.tokenizer, chat_template="llama-3.1")
+        # if "qwen" in self.model_type:
+        #     self.tokenizer = get_chat_template(self.tokenizer, chat_template="qwen-3.0")
+
     def free_memory(self) -> None:
         if hasattr(self, 'model') and self.model is not None:
             try:
