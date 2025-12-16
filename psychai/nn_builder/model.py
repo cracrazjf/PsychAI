@@ -226,6 +226,7 @@ class CausalLMWrapper(nn.Module):
 
 
         return {"input_ids": model_input_ids,
+                "attention_mask": model_attention_mask,
                 "loss": loss, 
                 "logits": logits,
                 "labels": labels, 

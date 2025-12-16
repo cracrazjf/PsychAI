@@ -50,15 +50,13 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = [
-    "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
+    "unsloth",
     "trl>=0.7.0",
     "peft>=0.15.2"
 ]
 vision = [
-    "Pillow>=10.0.0",
     "torchvision>=0.16.0",
     "timm>=0.9.0",
-    "accelerate>=0.24.0"
 ]
 
 [project.urls]
