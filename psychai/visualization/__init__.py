@@ -1,15 +1,9 @@
-from .ploting import (
-    plot_lines,
-    plot_heatmap,
-    plot_heatmaps,
-    plot_bars,
-    plot_scatter
+from .figure_drawing import (
+    draw_barplot,
+    draw_scatter_xy,
 )
 
 __all__ = [
-    "plot_lines",
-    "plot_heatmap",
-    "plot_heatmaps",
-    "plot_bars",
-    "plot_scatter"
+    "draw_barplot",
+    "draw_scatter_xy",
 ]
