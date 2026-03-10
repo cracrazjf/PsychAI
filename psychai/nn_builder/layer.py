@@ -466,17 +466,20 @@ class Jordan(Layer):
             y_t = torch.zeros(B, O, device=x.device, dtype=x.dtype)
 
         ys = []
+        hs = []
         for t in range(T):
             x_t = x[:, t, :]    
             x_t = self.hx(x_t)
             y_h  = self.yh(y_t)
             h_t = self.act(x_t + y_h)
+            hs.append(h_t.unsqueeze(1))
             y_t = self.lm_head(h_t)
 
             ys.append(y_t.unsqueeze(1))
 
         y = torch.cat(ys, dim=1)
-        return {"logits": y, "last_logits": y_t}
+        h = torch.cat(hs, dim=1)
+        return {"hidden": h, "logits": y, "last_logits": y_t}
 
 
 @register_layer("lm_head")

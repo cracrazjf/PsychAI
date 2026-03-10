@@ -163,7 +163,8 @@ def save_checkpoint(
     global_step: Optional[int] = None,
     metrics: Optional[Dict[str, Any]] = None,       # e.g., {"val_loss": 1.23, "accuracy": 0.91}
     is_best: bool = False,
-    max_to_keep: int = 3,                           # how many epoch_* dirs to retain
+    max_to_keep: int = 3,          
+    prefer_safetensors: bool = True,  # whether to prefer saving in safetensors format
 ) -> str:
     """
     Saves a full training checkpoint under run_dir/checkpoints/epoch_XXXX/.
@@ -179,7 +180,7 @@ def save_checkpoint(
     # 1) Save model weights (.safetensors preferred)
     weights_path = os.path.join(ckpt_dir, "model.safetensors" if _HAS_SAFETENSORS else "pytorch_model.bin")
     state = _tensor_state_dict_cpu_only(model.state_dict())
-    if _HAS_SAFETENSORS:
+    if _HAS_SAFETENSORS and prefer_safetensors:
         _save_safetensors(state, weights_path)
     else:
         torch.save(state, weights_path)

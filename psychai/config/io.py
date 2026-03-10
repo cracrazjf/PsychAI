@@ -7,6 +7,10 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
         return yaml.safe_load(f) or {}
 
+def save_yaml_config(config: Dict[str, Any], path: str):
+    with open(path, "w") as f:
+        yaml.dump(config, f)
+
 def update_config(dc, updates: Dict[str, Any]):
     fields = {f.name for f in dc.__dataclass_fields__.values()}
     kwargs = {}

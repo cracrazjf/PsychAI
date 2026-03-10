@@ -44,6 +44,7 @@ class DataConfig:
 class OptimConfig:
     lr: float = 3e-4
     optimizer: str = "adam"
+    momentum: float = 0.0
     lr_scheduler: Optional[str] = None
     lr_steps: Optional[list] = None
     gamma: float = 0.9
@@ -54,8 +55,9 @@ class OptimConfig:
 @dataclass
 class LoggingConfig:
     log_dir: str = None
-    interval_strategy: str = "epoch"
+    log_strategy: str = "epoch"
     log_interval: int = 10
+    eval_strategy: str = "epoch"
     eval_interval: int = 10
     save_interval: int = 10
     
@@ -67,6 +69,7 @@ class LoggingConfig:
     
     metric_for_best_model: str = None
     save_total_limit: int = 5
+    prefer_safetensors: bool = True
     load_best_model_at_end: bool = False
     save_model: bool = True
 

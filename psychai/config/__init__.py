@@ -6,7 +6,7 @@ from .config import (
     LoggingConfig,
 	TrainingConfig,
 )
-from .io import load_config, load_yaml_config, update_config
+from .io import load_config, load_yaml_config, update_config, save_yaml_config
 
 __all__ = [
 	"DataConfig",
@@ -18,4 +18,5 @@ __all__ = [
 	"load_config",
 	"load_yaml_config",
 	"update_config",
+	"save_yaml_config",
 ]

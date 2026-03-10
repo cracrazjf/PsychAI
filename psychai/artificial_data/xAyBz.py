@@ -1,5 +1,7 @@
 import json
 import itertools
+from random import random
+from tempfile import template
 import numpy as np
 from typing import Any
 from pathlib import Path
@@ -8,13 +10,14 @@ from ..language.tokenizer import create_custom_tokenizer, wrap_tokenizer, make_p
 
 class XAYBZ:
     def __init__(self,
+                 dataset_name=None,
                  num_ab_categories=2,
                  ab_category_size=3,
 
                  num_x_categories=0,
                  x_category_size=0,
 
-                 num_y_categories=0,
+                 num_y_categories=2,
                  y_category_size=3,
 
                  num_z_categories=0,
@@ -26,6 +29,7 @@ class XAYBZ:
                  max_y_per_sentence=1,
                  min_z_per_sentence=0,
                  max_z_per_sentence=0,
+
                  num_omitted_ab_pairs=1,
 
                  document_organization_rule='all_pairs',  # 'all_pairs', 'one_pair_each_category', 'single_sentence', 'single_category'
@@ -47,6 +51,7 @@ class XAYBZ:
 
                  random_seed=None
                  ):
+        self.dataset_name = dataset_name
         self.num_ab_categories = num_ab_categories
         self.ab_category_size = ab_category_size
         self.num_x_categories = num_x_categories
@@ -83,7 +88,6 @@ class XAYBZ:
     
     def create_dataset_name(self):
         parts = [
-            "xAyBz",
             self.num_ab_categories,
             self.ab_category_size,
             self.num_omitted_ab_pairs,
@@ -106,7 +110,8 @@ class XAYBZ:
             self.sentence_sequence_rule,
             self.random_seed
         ]
-        self.dataset_name = "_".join(map(str, parts))
+        if self.dataset_name is None:
+            self.dataset_name = "_".join(map(str, parts))
         print(f"\nCreating dataset {self.dataset_name}")
 
     def __repr__(self):
@@ -220,12 +225,12 @@ class XAYBZ:
         check(self.document_sequence_rule in
             {"massed", "interleaved", "random"},
             f"Unrecognized document_sequence_rule {self.document_sequence_rule}")
+        
     @staticmethod
     def _parse_cat_idx(word: str):
         if word == ".":
             return None, None
         if "_" not in word:
-            # (Optional) legacy fallback like "A32" -> cat=3, idx=2
             s = word
             if s and s[0] in "ABxyz":
                 s = s[1:]
@@ -456,13 +461,19 @@ class XAYBZ:
         Ys = current_y_list if current_y_list is not None else pick_many(self.y_list, num_y)
         Zs = current_z_list if current_z_list is not None else pick_many(self.z_list, num_z)
 
-        # base structure
+        symbol_map = {
+            "x": Xs,
+            "y": Ys,
+            "z": Zs,
+            "A": [ab_pair[0]],
+            "B": [ab_pair[1]],
+        }
+
+        sentence_template = "AyB"
+
         sentence = []
-        sentence.extend(Xs)
-        sentence.append(ab_pair[0])
-        sentence.extend(Ys)
-        sentence.append(ab_pair[1])
-        sentence.extend(Zs)
+        for s in sentence_template:
+            sentence.extend(symbol_map[s])
 
         # punctuation
         if self.include_punctuation:
@@ -473,9 +484,6 @@ class XAYBZ:
     def create_labels_for_sentence(self, a_vocab: str, b_vocab: str, y_cat: int | None):
         generated_vocab_size = len(self.generated_vocab_list)
         labels = ["Other"] * generated_vocab_size
-        to_idx = self.generated_vocab_index_dict
-        a_idx = to_idx[a_vocab]
-        b_idx = to_idx[b_vocab]
         a_cat = self.vocab_to_category[a_vocab]
         b_cat = self.vocab_to_category[b_vocab]
         a_inst = self.vocab_to_subcategory[a_vocab]  # 1-based

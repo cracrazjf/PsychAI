@@ -1,15 +1,18 @@
-from curses import wrapper
 import gc
 import torch
 import os
 import json
 import random
 import numpy as np
+from dataclasses import dataclass
+import math
 from tqdm import tqdm
 from pprint import pformat
 from itertools import chain
 from torch.utils.data import DataLoader
 from datasets import load_dataset, Dataset
+from datasets.utils.logging import disable_progress_bar
+disable_progress_bar()
 from typing import Dict, Optional, Any
 from transformers import DataCollatorForLanguageModeling
 from .utils import to_serializable, save_checkpoint, load_checkpoint, clean_dir
@@ -147,6 +150,40 @@ class ModelManager:
             print(f"total/trainable   : {total:,} / {trainable:,}")
 
 
+@dataclass
+class EarlyStopper:
+    patience: int = 5
+    min_delta: float = 0.0          # required improvement
+    mode: str = "min"               # "min" for loss, "max" for accuracy
+    warmup: int = 0                 # ignore stopping for first N evals
+
+    best: float = None
+    bad_count: int = 0
+    step: int = 0
+
+    def _is_better(self, value: float) -> bool:
+        if self.best is None:
+            return True
+        if self.mode == "min":
+            return value < (self.best - self.min_delta)
+        if self.mode == "max":
+            return value > (self.best + self.min_delta)
+        raise ValueError("mode must be 'min' or 'max'")
+
+    def update(self, value: float) -> bool:
+        """Return True if we should STOP."""
+        self.step += 1
+
+        # warmup: always continue, but still record best
+        if self.best is None or self._is_better(value):
+            self.best = value
+            self.bad_count = 0
+        else:
+            if self.step > self.warmup:
+                self.bad_count += 1
+
+        return self.bad_count >= self.patience
+
 class TrainingManager:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -164,6 +201,7 @@ class TrainingManager:
         elif self.cfg.optim.optimizer == "sgd":
             self.optimizer = torch.optim.SGD(self.mm.model.parameters(), 
                             lr=self.cfg.optim.lr, 
+                            momentum=self.cfg.optim.momentum,
                             weight_decay=self.cfg.optim.weight_decay)
         else:
             raise ValueError(f"Unsupported optimizer: {self.cfg.optim.optimizer}")
@@ -256,7 +294,7 @@ class TrainingManager:
         final_dataset = Dataset.from_dict(windows)
         
         collator = DataCollatorForLanguageModeling(tokenizer=self.mm.tokenizer, 
-                                                   mlm=self.cfg.wrapper == "masked_lm")
+                                                   mlm=self.cfg.model.wrapper == "masked_lm")
         
         g = torch.Generator().manual_seed(seed)
         dataloader = DataLoader(final_dataset,
@@ -281,12 +319,15 @@ class TrainingManager:
 
         epoch_loss = 0.0
         recurrent_state = {} if self.cfg.bp_method == "continuous" else None
-        with tqdm(total=len(dataloader),
+        with tqdm(dataloader,
                   desc=f"Train Epoch {epoch + 1}/{self.cfg.num_epochs}",
                   position=1,
                   leave=False,
-                  ncols=100) as batch_bar:
-            for i, batch in enumerate(dataloader):
+                  mininterval=1.0,
+                  maxinterval=5.0,
+                  ncols=100,
+                  disable=True) as batch_bar:
+            for i, batch in enumerate(batch_bar):
                 self.optimizer.zero_grad()
 
                 input_ids = batch["input_ids"].to(device)
@@ -306,19 +347,19 @@ class TrainingManager:
                 loss.backward()
                 self.optimizer.step()
                 epoch_loss += loss.item()
-                batch_bar.update(1)
-                batch_bar.set_postfix(loss=float(epoch_loss / (i + 1)), lr=self.optimizer.param_groups[0]["lr"])
+                if (i + 1) % 10 == 0:
+                    batch_bar.set_postfix(loss=float(epoch_loss / (i + 1)), lr=self.optimizer.param_groups[0]["lr"])
 
-                if self.cfg.interval_strategy == "step":
-                    if (i + 1) % self.cfg.eval_interval == 0:
+                if self.cfg.logging.eval_strategy == "step":
+                    if (i + 1) % self.cfg.logging.eval_interval == 0:
                         if val_loader is not None:
-                            batch_bar.clear()
+                            # batch_bar.clear()
                             self.evaluate(dataloader=val_loader, 
                                           eval_fn=eval_fn, 
                                           epoch=epoch, 
                                           step=i + 1, 
                                           eval_path=eval_path)
-                            batch_bar.refresh()
+                            # batch_bar.refresh()
                     if (i + 1) % self.cfg.logging.log_interval == 0:
                         with open(log_path, "a") as f:
                             f.write(json.dumps({"epoch": epoch + 1, "step": i + 1, "train_loss": epoch_loss / (i + 1)}) + "\n")
@@ -327,8 +368,8 @@ class TrainingManager:
                     
     def evaluate(self, 
                  dataloader: DataLoader, 
-                 eval_fn: Optional[Any], 
-                 epoch: Optional[int], 
+                 eval_fn: Optional[Any]=None, 
+                 epoch: Optional[int]=0, 
                  step: Optional[int] = 0, 
                  eval_path: Optional[str] = None):
         
@@ -368,8 +409,9 @@ class TrainingManager:
         with tqdm(total=len(dataloader),
                   desc=f"Evaluating",
                   position=1,
-                  leave=True,
+                  leave=False,
                   ncols=100,
+                  disable=True
                 ) as eval_bar:
             for i, batch in enumerate(dataloader):
                 with torch.no_grad():
@@ -401,8 +443,8 @@ class TrainingManager:
                     preds_per_batch.append(preds.cpu())
 
                     if self.cfg.logging.return_embeddings:
-                        embedding_maps.append(_collect_embeddings(batch["input_ids"], 
-                                                                  batch["attention_mask"], 
+                        embedding_maps.append(_collect_embeddings(outputs["input_ids"], 
+                                                                  outputs["attention_mask"], 
                                                                   outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type]))
 
                     eval_bar.update(1)
@@ -422,8 +464,6 @@ class TrainingManager:
                                       weights)
                 eval_bar.refresh()
                 if isinstance(eval_result, dict):
-                    if "accuracy" in eval_result:
-                        tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
                     for key, value in eval_result.items():
                         if isinstance(value, dict):
                             for k, v in value.items():
@@ -432,8 +472,9 @@ class TrainingManager:
                     if eval_path is not None:
                         with open(eval_path, "a") as f:
                             f.write(json.dumps(eval_info) + "\n")
-
-                return eval_result
+                return eval_info
+            else:
+                return inputs_per_batch, logits_per_batch, preds_per_batch, labels_per_batch, embedding_maps, weights
 
     def generate(self, prompt: str | torch.Tensor, max_new_tokens: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
         device = next(self.mm.model.parameters()).device
@@ -485,7 +526,6 @@ class TrainingManager:
                 torch.cuda.manual_seed(seed)
             random.seed(seed)
             np.random.seed(seed)
-
             run_dir = None
             log_path = None
             if self.cfg.exp_dir is not None:
@@ -502,7 +542,7 @@ class TrainingManager:
             self.mm.load_model(self.cfg.model.name,
                                self.cfg.model.path,
                                self.cfg.model.model_type,
-                               task=self.cfg.task,
+                               wrapper=self.cfg.model.wrapper,
                                device=self.cfg.device,
                                tokenizer_path=self.cfg.model.tokenizer_path,
                                trust_remote_code=self.cfg.model.trust_remote_code)
@@ -532,7 +572,10 @@ class TrainingManager:
                       desc=f"Run {run+1}/{self.cfg.num_runs}",
                       position=0,
                       dynamic_ncols=True,
+                      leave=False,
+                      disable=True
                     ) as epoch_bar:
+                stopper = EarlyStopper(patience=5, min_delta=1e-4, mode="min", warmup=2)
                 for epoch in range(self.cfg.num_epochs):
                     if self.cfg.data.shuffle_dataset:
                         train_dataloader = self.prepare_data(train_dataset, 
@@ -547,31 +590,34 @@ class TrainingManager:
                                                  eval_path=eval_path, 
                                                  log_path=log_path)
 
-                    if self.cfg.eval_strategy == "epoch":
-                        if (epoch+1) % self.cfg.eval_interval == 0:
+                    if self.cfg.logging.eval_strategy == "epoch":
+                        if (epoch+1) % self.cfg.logging.eval_interval == 0:
                             if val_dataloader is not None:
                                 epoch_bar.clear()
-                                self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
+                                eval_info = self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
                                 epoch_bar.refresh()
-                    
+                                # if stopper.update(eval_info["eval_loss"]):
+                                #     print(f"Early stopping at epoch {epoch + 1}")
+                                #     break
                         if (epoch + 1) % self.cfg.logging.log_interval == 0:
                             with open(log_path, "a") as f:
                                 f.write(json.dumps(train_info) + "\n")
 
-                    if (epoch + 1) % self.cfg.save_interval == 0:
+                    if (epoch + 1) % self.cfg.logging.save_interval == 0:
                         save_checkpoint(run_dir, 
                                         self.mm.model, 
                                         optimizer=self.optimizer,
                                         scaler=None,
                                         tokenizer=self.mm.tokenizer,
                                         epoch=epoch,
-                                        max_to_keep=self.cfg.logging.save_total_limit
+                                        max_to_keep=self.cfg.logging.save_total_limit,
+                                        prefer_safetensors=self.cfg.logging.prefer_safetensors
                                         )
                     epoch_bar.update(1)
             
-            if self.cfg.save_model:
+            if self.cfg.logging.save_model:
                 save_dir = os.path.join(run_dir, "export")
                 clean_dir(save_dir)
-                save_pretrained(self.mm.model, save_dir)
+                save_pretrained(self.mm.model, save_dir, prefer_safetensors=self.cfg.logging.prefer_safetensors)
                 self.mm.tokenizer.save_pretrained(save_dir)
                 print(f"model saved!")
