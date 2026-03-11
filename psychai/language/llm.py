@@ -213,12 +213,10 @@ class TrainingManager:
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
 
-        preds_per_batch = []
-        labels_per_batch = []
-        inputs_per_batch = []
-        logits_per_batch = []
-        weights = {}
-        embedding_maps = []
+        if eval_path is not None:
+            open(eval_path, "w").close()
+
+        weights = None
 
         def _collect_embeddings(input_ids, attention_mask, embeddings):
             batch_size = input_ids.shape[0]
@@ -236,64 +234,48 @@ class TrainingManager:
             return embeddings_list
 
         eval_loss = 0
-        with tqdm(total=len(dataloader),
-                  desc=f"Evaluating",
-                  position=1,
-                  leave=True,
-                  ncols=100,
-                ) as eval_bar:
-            for i, batch in enumerate(dataloader):
-                with torch.inference_mode():
-                    input_ids = batch["input_ids"].to(device)
-                    attention_mask = batch["attention_mask"].to(device)
-                    labels = batch.get("labels", None)
-                    if labels is not None:
-                        labels = labels.to(device)
-                    
-                    outputs = self.mm.model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        labels=labels, 
-                        return_dict=True,
-                        output_logits=True,
-                        output_hidden_states=self.cfg.logging.return_embeddings)
-                    
-                    logits = outputs["logits"]
-                    preds = torch.argmax(logits, dim=-1)
-                    inputs_per_batch.append(batch["input_ids"].cpu())
-                    if labels is not None:
-                        labels_per_batch.append(outputs["labels"].cpu())
-                    logits_per_batch.append(logits.cpu())
-                    assert logits.shape[1] == input_ids.shape[1], "Logits and input_ids sequence length mismatch"
-                    preds_per_batch.append(preds.cpu())
-                    if self.cfg.logging.return_embeddings:
-                        batch_embeddings = _collect_embeddings(
-                            input_ids,
-                            attention_mask,
-                            outputs["hidden_states"][self.cfg.logging.layer_of_interest]
-                        )
-                        embedding_maps.append(batch_embeddings)
-
-                    eval_bar.update(1)
-                    eval_bar.set_postfix({"loss": f"{eval_loss / (i + 1):.4f}"})
-            
-            eval_info = {"epoch": epoch + 1, "step": step, "eval_loss": eval_loss / len(dataloader)}
-
-            if eval_fn is not None:
-                eval_bar.clear()
-                eval_result = eval_fn(self.mm, 
-                                      self.cfg, 
-                                      inputs_per_batch, 
-                                      labels_per_batch, 
-                                      logits_per_batch, 
-                                      preds_per_batch, 
-                                      embedding_maps, 
-                                      weights)
-                eval_bar.refresh()
+        for i, batch in enumerate(dataloader):
+            with torch.inference_mode():
+                idxs = batch.get("idx", None)
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+                labels = batch.get("labels", None)
+                if labels is not None:
+                    labels = labels.to(device)
                 
+                outputs = self.mm.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels, 
+                    return_dict=True,
+                    output_logits=True,
+                    output_hidden_states=self.cfg.logging.return_embeddings)
+                
+                logits = outputs["logits"]
+                preds = torch.argmax(logits, dim=-1)
+
+                embedding_list = None
+                if self.cfg.logging.return_embeddings:
+                    embedding_list = _collect_embeddings(
+                        input_ids,
+                        attention_mask,
+                        outputs["hidden_states"][self.cfg.logging.layer_of_interest]
+                    )
+        
+                eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader)}
+
+                if eval_fn is not None:
+                    eval_result = eval_fn(self.mm, 
+                                        self.cfg, 
+                                        idxs,
+                                        outputs["input_ids"], 
+                                        outputs["labels"] if "labels" in outputs else None, 
+                                        logits,
+                                        preds,
+                                        embedding_list, 
+                                        weights)
+                    
                 if isinstance(eval_result, dict):
-                    if "accuracy" in eval_result:
-                        tqdm.write("accuracy:\n" + pformat(eval_result["accuracy"]))
                     for key, value in eval_result.items():
                         if isinstance(value, dict):
                             for k, v in value.items():
@@ -302,6 +284,13 @@ class TrainingManager:
                     if eval_path is not None:
                         with open(eval_path, "a") as f:
                             f.write(json.dumps(eval_info) + "\n")
-
-                return eval_result
+                    else:
+                        raise ValueError("eval_path must be provided when eval_fn is used")
+                elif isinstance(eval_result, list):
+                    for rec in eval_result:
+                        if eval_path is not None:
+                            with open(eval_path, "a") as f:
+                                f.write(json.dumps(rec) + "\n")
+                else:   
+                    raise ValueError("eval_fn must return a dict or list of dicts")
 

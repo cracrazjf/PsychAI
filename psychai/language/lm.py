@@ -375,16 +375,14 @@ class TrainingManager:
         
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
-
-        preds_per_batch = []
-        labels_per_batch = []
-        inputs_per_batch = []
-        logits_per_batch = []
-        weights = {}
-        embedding_maps = []
         
         if self.cfg.logging.return_weights:
             weights = self.mm.model.base_model.get_weights()
+        else:
+            weights = None
+        
+        if eval_path is not None:
+            open(eval_path, "w").close()
 
         recurrent_state = {} if self.cfg.bp_method == "continuous" else None
 
@@ -406,63 +404,48 @@ class TrainingManager:
             return embeddings_list
         
         eval_loss = 0
-        with tqdm(total=len(dataloader),
-                  desc=f"Evaluating",
-                  position=1,
-                  leave=False,
-                  ncols=100,
-                  disable=True
-                ) as eval_bar:
-            for i, batch in enumerate(dataloader):
-                with torch.no_grad():
-                    input_ids = batch["input_ids"].to(device)
-                    attention_mask = batch["attention_mask"].to(device)
-                    labels = batch.get("labels", None)
-                    if labels is not None:
-                        labels = labels.to(device)
+        for i, batch in enumerate(dataloader):
+            with torch.no_grad():
+                idxs = batch.get("idx", None)
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+                labels = batch.get("labels", None)
+                if labels is not None:
+                    labels = labels.to(device)
 
-                    outputs = self.mm.model.forward(input_ids=input_ids, 
-                                                    attention_mask=attention_mask, 
-                                                    labels=labels, 
-                                                    recurrent_state=recurrent_state,
-                                                    detach_state=False,
-                                                    return_embeds=self.cfg.logging.return_embeddings)
+                outputs = self.mm.model.forward(input_ids=input_ids, 
+                                                attention_mask=attention_mask, 
+                                                labels=labels, 
+                                                recurrent_state=recurrent_state,
+                                                detach_state=False,
+                                                return_embeds=self.cfg.logging.return_embeddings)
+                
+                if self.cfg.bp_method == "continuous":
+                    recurrent_state = outputs["recurrent_state"]
+                
+                loss = outputs["loss"]
+                eval_loss += loss.item()
+
+                logits = outputs["logits"]
+                preds = torch.argmax(logits, dim=-1)
+
+                embedding_list = None
+                if self.cfg.logging.return_embeddings:
+                    embedding_list = _collect_embeddings(outputs["input_ids"], outputs["attention_mask"], 
+                    outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type])
                     
-                    if self.cfg.bp_method == "continuous":
-                        recurrent_state = outputs["recurrent_state"]
-                    
-                    loss = outputs["loss"]
-                    eval_loss += loss.item()
+                eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader)}
 
-                    logits = outputs["logits"]
-                    preds = torch.argmax(logits, dim=-1)
-
-                    inputs_per_batch.append(outputs["input_ids"].cpu())
-                    labels_per_batch.append(outputs["labels"].cpu())
-                    logits_per_batch.append(logits.cpu())
-                    preds_per_batch.append(preds.cpu())
-
-                    if self.cfg.logging.return_embeddings:
-                        embedding_maps.append(_collect_embeddings(outputs["input_ids"], 
-                                                                  outputs["attention_mask"], 
-                                                                  outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type]))
-
-                    eval_bar.update(1)
-                    eval_bar.set_postfix({"loss": f"{eval_loss / (i + 1):.4f}"})
-
-            eval_info = {"epoch": epoch + 1, "step": step, "eval_loss": eval_loss / len(dataloader)}
-
-            if eval_fn is not None:
-                eval_bar.clear()
-                eval_result = eval_fn(self.mm, 
-                                      self.cfg, 
-                                      inputs_per_batch, 
-                                      labels_per_batch, 
-                                      logits_per_batch, 
-                                      preds_per_batch, 
-                                      embedding_maps, 
-                                      weights)
-                eval_bar.refresh()
+                if eval_fn is not None:
+                    eval_result = eval_fn(self.mm, 
+                                        self.cfg, 
+                                        idxs,
+                                        outputs["input_ids"], 
+                                        outputs["labels"] if "labels" in outputs else None, 
+                                        logits,
+                                        preds,
+                                        embedding_list, 
+                                        weights)
                 if isinstance(eval_result, dict):
                     for key, value in eval_result.items():
                         if isinstance(value, dict):
@@ -472,9 +455,15 @@ class TrainingManager:
                     if eval_path is not None:
                         with open(eval_path, "a") as f:
                             f.write(json.dumps(eval_info) + "\n")
-                return eval_info
-            else:
-                return inputs_per_batch, logits_per_batch, preds_per_batch, labels_per_batch, embedding_maps, weights
+                    else:
+                        raise ValueError("eval_path must be provided when eval_fn is used")
+                elif isinstance(eval_result, list):
+                    for rec in eval_result:
+                        if eval_path is not None:
+                            with open(eval_path, "a") as f:
+                                f.write(json.dumps(rec) + "\n")
+                else:   
+                    raise ValueError("eval_fn must return a dict or list of dicts")
 
     def generate(self, prompt: str | torch.Tensor, max_new_tokens: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
         device = next(self.mm.model.parameters()).device
