@@ -502,3 +502,47 @@ class LMHead(Layer):
         if h.dim() != 3:
             raise ValueError("LMHeadLayer expects 'hidden' with shape (B,T,C)")
         return {"logits": self.proj(h)}
+
+
+@register_layer("cnn")
+class CNN(Layer):
+    def __init__(self, num_classes: int, in_channels: int = 3, out_channels: int = 64, kernel_size: int = 3, embed_size=128, padding=1, dropout_p=0.3):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)   # (32x32) -> (32x32)
+        self.conv2 = nn.Conv2d(out_channels, out_channels * 2, kernel_size=kernel_size, padding=padding)  # (32x32) -> (32x32)
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.fc1 = nn.Linear(out_channels * 2 * 8 * 8, embed_size)
+        self.fc2 = nn.Linear(embed_size, num_classes)
+
+        self.dropout = nn.Dropout(p=dropout_p)
+
+    @property
+    def requires(self): return ("pixel_values",)
+
+    @property
+    def provides(self): return ("logits",)
+
+    def forward(self, inputs: Dict[str, Any], return_features: bool = False) -> Dict[str, Any]:
+        x = inputs.get("pixel_values")
+        # Conv block 1
+        x = F.relu(self.conv1(x))
+        x = self.pool(x)  # 32x32 -> 16x16
+
+        # Conv block 2
+        x = F.relu(self.conv2(x))
+        x = self.pool(x)  # 16x16 -> 8x8
+
+        # Flatten
+        x = torch.flatten(x, 1)
+
+        # Feature representation (for kNN / Mahalanobis)
+        features = F.relu(self.fc1(x))
+        features = self.dropout(features)
+
+        logits = self.fc2(features)
+
+        if return_features:
+            return logits, features
+        return logits

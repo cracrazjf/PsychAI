@@ -1,9 +1,15 @@
 import gc
 import timm
 import torch
+import random
+import numpy as np
+import json
+import os
 from timm.data import resolve_model_data_config
 from torch.utils.data import DataLoader
 from typing import Any, Optional
+from ..nn_builder import ClassificationModelWrapper, Model, build_spec_from_config, from_pretrained, load_config
+from ..language.utils import to_serializable
 
 class ModelManager:
     def __init__(self):
@@ -11,13 +17,15 @@ class ModelManager:
         self.model_name = None
         self.model_path = None
         self.model_type = None
+        self.model_wrapper = None
         self.model_config = None
 
     def load_model(self, 
                    model_name: str, 
                    model_path: str,
                    model_type: str,
-                   device,
+                   wrapper: Optional[str] = None,
+                   device = "cpu",
                    task: str = "classification") -> None:
         
         self.free_memory()
@@ -25,9 +33,28 @@ class ModelManager:
         self.model_name = model_name
         self.model_path = model_path
         self.model_type = model_type
-        
-        self.model = timm.create_model(model_name, pretrained=True, features_only= (task== "feature_extraction"))
-        self.model_config = resolve_model_data_config(model=self.model)
+        self.wrapper = wrapper
+
+        if "custom" in model_type:
+            wrapper_map = {
+                "classification": ClassificationModelWrapper,
+            }
+            ctor = wrapper_map.get(wrapper, None)
+            try:
+                self.model = from_pretrained(self.model_path)
+            except Exception:
+                print(f"Model not found, rebuilding model from config")
+
+                config = load_config(self.model_path)
+            model = build_spec_from_config(config)  
+            self.model = Model(model)
+            print(self.model.summary())
+            if ctor is not None:
+                self.model = ctor(self.model)
+                print(f"Model wrapped with {ctor}")
+        elif "timm" in model_type:
+            self.model = timm.create_model(model_name, pretrained=True, features_only= (task== "feature_extraction"))
+            self.model_config = resolve_model_data_config(model=self.model)
         self.model.to(device)
 
         print(f"Model {model_name} loaded on {device}.")
@@ -56,6 +83,45 @@ class TrainingManager:
          self.cfg = cfg
          self.mm = ModelManager()
 
+    def configure_optimizer(self):
+        if self.cfg.optim.optimizer == "adamw":
+            self.optimizer = torch.optim.AdamW(self.mm.model.parameters(), 
+                              lr=self.cfg.optim.lr, 
+                              weight_decay=self.cfg.optim.weight_decay)
+        elif self.cfg.optim.optimizer == "adam":
+            self.optimizer = torch.optim.Adam(self.mm.model.parameters(), 
+                                         lr=self.cfg.optim.lr, 
+                                         weight_decay=self.cfg.optim.weight_decay)
+        elif self.cfg.optim.optimizer == "sgd":
+            self.optimizer = torch.optim.SGD(self.mm.model.parameters(), 
+                            lr=self.cfg.optim.lr, 
+                            momentum=self.cfg.optim.momentum,
+                            weight_decay=self.cfg.optim.weight_decay)
+        else:
+            raise ValueError(f"Unsupported optimizer: {self.cfg.optim.optimizer}")
+
+    def train_epoch(self, train_loader: DataLoader, val_loader: DataLoader):
+        device = next(self.mm.model.parameters()).device
+        self.mm.model.train()
+
+        epoch_loss = 0.0
+        for step, batch in enumerate(train_loader):
+            inputs = batch['pixel_values'].to(device)
+            labels = batch['labels'].long().to(device)
+
+            if self.cfg.model.wrapper == "classification":
+                outputs = self.mm.model(inputs, labels=labels)
+                epoch_loss += outputs["loss"].item()
+            else:
+                raise NotImplementedError(f"Task {self.cfg.task} not implemented yet")
+
+            self.optimizer.zero_grad()
+            outputs["loss"].backward()
+            if self.cfg.optim.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.mm.model.parameters(), self.cfg.optim.grad_clip)
+            self.optimizer.step()
+        return {"epoch_loss": epoch_loss / len(train_loader)}
+
     def evaluate(self, 
                  dataloader: DataLoader, 
                  eval_fn: Optional[Any], 
@@ -66,43 +132,99 @@ class TrainingManager:
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
 
-        preds_per_batch = []
-        labels_per_batch = []
-        inputs_per_batch = []
-        logits_per_batch = []
-        embeddings = []
+        embedding_list = None
+        weights = None
+        if self.cfg.logging.return_weights:
+            weights = self.mm.model.get_weights()
+
+        eval_loss = 0.0
+        accuracy = 0.0
 
         with torch.no_grad():
-            for batch in dataloader:
+            for i, batch in enumerate(dataloader):
+                idxs = batch.get("idx", None)
                 inputs = batch['pixel_values'].to(device)
                 labels = batch.get("labels", None)
                 if labels is not None:
-                    labels = torch.tensor(batch['labels']).long().to(device)
+                    labels = batch['labels'].long().to(device)
 
-                if self.cfg.task == "classification":
-                    logits = self.mm.model(inputs)
-                    preds = logits.argmax(dim=-1)
-                    preds_per_batch.append(preds.cpu())
-                    if labels is not None:
-                        labels_per_batch.append(labels.cpu())
-                    inputs_per_batch.append(inputs.cpu())
-                    if cfg.logging.return_logits:
-                        logits_per_batch.append(logits.cpu())
+                if self.cfg.model.wrapper == "classification":
+                    outputs = self.mm.model(inputs, labels=labels)
+                    eval_loss += outputs["loss"].item()
+                    preds = outputs["logits"].argmax(dim=-1)
+                    accuracy += (preds == labels).sum().item()
                 else:
                     feats = self.mm.model(inputs)
-                    embeddings.append(feats[self.cfg.logging.layer_of_interest].cpu())
 
-        if self.cfg.task == "classification":
+            eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / len(dataloader)}
+            
+        if self.cfg.model.wrapper == "classification":
             if eval_fn is not None:
-                eval_results = eval_fn(self.mm, 
-                                        self.cfg, 
-                                        inputs_per_batch, 
-                                        labels_per_batch, 
-                                        logits_per_batch, 
-                                        preds_per_batch, 
-                                        embeddings)
+                eval_result = eval_fn(self.mm, 
+                                    self.cfg, 
+                                    idxs,
+                                    outputs["input_ids"], 
+                                    outputs["labels"] if "labels" in outputs else None, 
+                                    outputs["logits"],
+                                    preds,
+                                    embedding_list, 
+                                    weights)
                 
-                return eval_results
+        if isinstance(eval_result, dict):
+            for key, value in eval_result.items():
+                if isinstance(value, dict):
+                    for k, v in value.items():
+                        value[k] = to_serializable(v)
+                eval_info[key] = to_serializable(value)
+            if eval_path is not None:
+                with open(eval_path, "a") as f:
+                    f.write(json.dumps(eval_info) + "\n")
+            else:
+                raise ValueError("eval_path must be provided when eval_fn is used")
+        elif isinstance(eval_result, list):
+            for rec in eval_result:
+                if eval_path is not None:
+                    with open(eval_path, "a") as f:
+                        f.write(json.dumps(rec) + "\n")
+        else:   
+            raise ValueError("eval_fn must return a dict or list of dicts")
+
+    def train(self, train_loader: DataLoader, val_loader: DataLoader, eval_fn: Optional[Any] = None):
+        for run in range(self.cfg.num_runs):
+            seed = self.cfg.seed + run
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(seed)
+            random.seed(seed)
+            np.random.seed(seed)
+            run_dir = None
+            log_path = None
+            if self.cfg.exp_dir is not None:
+                run_dir = os.path.join(self.cfg.exp_dir, f"run_{run+1}")
+                os.makedirs(run_dir, exist_ok=True)
+                log_path = os.path.join(run_dir, "log.jsonl")
+                eval_path = os.path.join(run_dir, "eval_results.json")
+                with open(log_path, "w") as f:
+                    f.write("")
+                with open(eval_path, "w") as f:
+                    f.write("")
+        
+        self.mm.load_model(
+            model_name=self.cfg.model.name,
+            model_path=self.cfg.model.path,
+            model_type=self.cfg.model.model_type,
+            wrapper=self.cfg.model.wrapper,
+            device=self.cfg.device,
+            task=self.cfg.task
+        )
+
+        self.configure_optimizer()
+
+        for epoch in range(self.cfg.num_epochs):
+            train_info = self.train_epoch(train_loader, val_loader)
+            if (epoch + 1) % self.cfg.logging.log_interval == 0:
+                with open(log_path, "a") as f:
+                    f.write(json.dumps(train_info) + "\n")
 
 
 

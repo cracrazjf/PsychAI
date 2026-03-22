@@ -13,6 +13,7 @@ from .model import (
     Model,
     ModelSpec,
     CausalLMWrapper,
+    ClassificationModelWrapper
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "from_pretrained",
     "Model",
     "ModelSpec",
-    "CausalLMWrapper"]
+    "CausalLMWrapper",
+    "ClassificationModelWrapper"]

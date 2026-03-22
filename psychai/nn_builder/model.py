@@ -232,4 +232,68 @@ class CausalLMWrapper(nn.Module):
                 "labels": labels, 
                 "recurrent_state": next_state, 
                 "embeds": embeds}
-        
+    
+class ClassificationModelWrapper(nn.Module):
+    def __init__(self, model: nn.Module, loss_fn: nn.Module = None):
+        super().__init__()
+        self.base_model = model
+        self.loss_fn = nn.CrossEntropyLoss() if loss_fn is None else loss_fn
+
+    def forward(
+        self,
+        inputs,
+        labels: torch.Tensor | None = None,
+        return_embeds: bool = False,
+    ):
+
+        # Allow either raw tensor input or dict input
+        if isinstance(inputs, dict):
+            if "images" in inputs:
+                x = {"pixel_values": inputs["images"]}
+            elif "pixel_values" in inputs:
+                x = {"pixel_values": inputs["pixel_values"]}
+            else:
+                raise ValueError("Input dict must contain 'images' or 'pixel_values'")
+        else:
+            x = {"pixel_values": inputs}
+
+        embeds = None
+
+        # Case 1: model supports return_embeds
+        if return_embeds:
+            try:
+                output = self.base_model(x, return_embeds=True)
+            except TypeError:
+                output = self.base_model(x)
+        else:
+            output = self.base_model(x)
+
+        # Handle several possible output formats
+        if isinstance(output, tuple):
+            if len(output) == 2:
+                logits, embeds = output
+            else:
+                logits = output[0]
+                embeds = output[-1]
+        elif isinstance(output, dict):
+            logits = output["logits"]
+            embeds = output.get("embeds", None)
+        else:
+            logits = output
+
+        # Compute loss
+        if labels is not None:
+            if labels.dtype != torch.long:
+                labels = labels.long()
+            loss = self.loss_fn(logits, labels)
+        else:
+            labels = torch.tensor([], device=logits.device, dtype=torch.long)
+            loss = torch.tensor(0.0, device=logits.device)
+
+        return {
+            "inputs": inputs,
+            "loss": loss,
+            "logits": logits,
+            "labels": labels,
+            "embeds": embeds,
+        }

@@ -19,9 +19,12 @@ class ModelConfig:
     block_size: int = 0
     num_heads: int = 0
     vocab_size: int = 0
+    image_shape: tuple = None
+    num_classes: int = 0
 
 @dataclass
 class DataConfig:
+    name: str = None
     train_path: str = None
     val_path: str = None
     test_path: str = None

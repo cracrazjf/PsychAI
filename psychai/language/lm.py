@@ -319,50 +319,38 @@ class TrainingManager:
 
         epoch_loss = 0.0
         recurrent_state = {} if self.cfg.bp_method == "continuous" else None
-        with tqdm(dataloader,
-                  desc=f"Train Epoch {epoch + 1}/{self.cfg.num_epochs}",
-                  position=1,
-                  leave=False,
-                  mininterval=1.0,
-                  maxinterval=5.0,
-                  ncols=100,
-                  disable=True) as batch_bar:
-            for i, batch in enumerate(batch_bar):
-                self.optimizer.zero_grad()
+        for i, batch in enumerate(dataloader):
+            self.optimizer.zero_grad()
 
-                input_ids = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                labels = batch["labels"].to(device)
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
 
-                outputs = self.mm.model.forward(input_ids=input_ids, 
-                                                attention_mask=attention_mask, 
-                                                labels=labels, 
-                                                recurrent_state=recurrent_state,
-                                                detach_state=True)
-                
-                if self.cfg.bp_method == "continuous":
-                    recurrent_state = outputs["recurrent_state"]
+            outputs = self.mm.model.forward(input_ids=input_ids, 
+                                            attention_mask=attention_mask, 
+                                            labels=labels, 
+                                            recurrent_state=recurrent_state,
+                                            detach_state=True)
+            
+            if self.cfg.bp_method == "continuous":
+                recurrent_state = outputs["recurrent_state"]
 
-                loss = outputs["loss"]
-                loss.backward()
-                self.optimizer.step()
-                epoch_loss += loss.item()
-                if (i + 1) % 10 == 0:
-                    batch_bar.set_postfix(loss=float(epoch_loss / (i + 1)), lr=self.optimizer.param_groups[0]["lr"])
+            loss = outputs["loss"]
+            loss.backward()
+            self.optimizer.step()
+            epoch_loss += loss.item()
 
-                if self.cfg.logging.eval_strategy == "step":
-                    if (i + 1) % self.cfg.logging.eval_interval == 0:
-                        if val_loader is not None:
-                            # batch_bar.clear()
-                            self.evaluate(dataloader=val_loader, 
-                                          eval_fn=eval_fn, 
-                                          epoch=epoch, 
-                                          step=i + 1, 
-                                          eval_path=eval_path)
-                            # batch_bar.refresh()
-                    if (i + 1) % self.cfg.logging.log_interval == 0:
-                        with open(log_path, "a") as f:
-                            f.write(json.dumps({"epoch": epoch + 1, "step": i + 1, "train_loss": epoch_loss / (i + 1)}) + "\n")
+            if self.cfg.logging.eval_strategy == "step":
+                if (i + 1) % self.cfg.logging.eval_interval == 0:
+                    if val_loader is not None:
+                        self.evaluate(dataloader=val_loader, 
+                                        eval_fn=eval_fn, 
+                                        epoch=epoch, 
+                                        step=i + 1, 
+                                        eval_path=eval_path)
+                if (i + 1) % self.cfg.logging.log_interval == 0:
+                    with open(log_path, "a") as f:
+                        f.write(json.dumps({"epoch": epoch + 1, "step": i + 1, "train_loss": epoch_loss / (i + 1)}) + "\n")
 
         return {"epoch": epoch + 1, "train_loss": epoch_loss / len(dataloader)}
                     
@@ -527,7 +515,6 @@ class TrainingManager:
                 with open(eval_path, "w") as f:
                     f.write("")
 
-            tqdm.write(f"===== Run {run + 1}/{self.cfg.num_runs} =====")
             self.mm.load_model(self.cfg.model.name,
                                self.cfg.model.path,
                                self.cfg.model.model_type,
@@ -556,53 +543,38 @@ class TrainingManager:
                                                    shuffle_dataset=False, 
                                                    shuffle_dataloader=False, 
                                                    seed=seed)
+            for epoch in range(self.cfg.num_epochs):
+                if self.cfg.data.shuffle_dataset:
+                    train_dataloader = self.prepare_data(train_dataset, 
+                                                            shuffle_dataset=True, 
+                                                            shuffle_dataloader=self.cfg.data.shuffle_dataloader, 
+                                                            seed=seed + epoch)
 
-            with tqdm(total=self.cfg.num_epochs,
-                      desc=f"Run {run+1}/{self.cfg.num_runs}",
-                      position=0,
-                      dynamic_ncols=True,
-                      leave=False,
-                      disable=True
-                    ) as epoch_bar:
-                stopper = EarlyStopper(patience=5, min_delta=1e-4, mode="min", warmup=2)
-                for epoch in range(self.cfg.num_epochs):
-                    if self.cfg.data.shuffle_dataset:
-                        train_dataloader = self.prepare_data(train_dataset, 
-                                                             shuffle_dataset=True, 
-                                                             shuffle_dataloader=self.cfg.data.shuffle_dataloader, 
-                                                             seed=seed + epoch)
+                train_info =self.train_epoch(train_dataloader, 
+                                                epoch, 
+                                                val_loader=val_dataloader, 
+                                                eval_fn=eval_fn, 
+                                                eval_path=eval_path, 
+                                                log_path=log_path)
 
-                    train_info =self.train_epoch(train_dataloader, 
-                                                 epoch, 
-                                                 val_loader=val_dataloader, 
-                                                 eval_fn=eval_fn, 
-                                                 eval_path=eval_path, 
-                                                 log_path=log_path)
+                if self.cfg.logging.eval_strategy == "epoch":
+                    if (epoch+1) % self.cfg.logging.eval_interval == 0:
+                        if val_dataloader is not None:
+                            eval_info = self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
+                    if (epoch + 1) % self.cfg.logging.log_interval == 0:
+                        with open(log_path, "a") as f:
+                            f.write(json.dumps(train_info) + "\n")
 
-                    if self.cfg.logging.eval_strategy == "epoch":
-                        if (epoch+1) % self.cfg.logging.eval_interval == 0:
-                            if val_dataloader is not None:
-                                epoch_bar.clear()
-                                eval_info = self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
-                                epoch_bar.refresh()
-                                # if stopper.update(eval_info["eval_loss"]):
-                                #     print(f"Early stopping at epoch {epoch + 1}")
-                                #     break
-                        if (epoch + 1) % self.cfg.logging.log_interval == 0:
-                            with open(log_path, "a") as f:
-                                f.write(json.dumps(train_info) + "\n")
-
-                    if (epoch + 1) % self.cfg.logging.save_interval == 0:
-                        save_checkpoint(run_dir, 
-                                        self.mm.model, 
-                                        optimizer=self.optimizer,
-                                        scaler=None,
-                                        tokenizer=self.mm.tokenizer,
-                                        epoch=epoch,
-                                        max_to_keep=self.cfg.logging.save_total_limit,
-                                        prefer_safetensors=self.cfg.logging.prefer_safetensors
-                                        )
-                    epoch_bar.update(1)
+                if (epoch + 1) % self.cfg.logging.save_interval == 0:
+                    save_checkpoint(run_dir, 
+                                    self.mm.model, 
+                                    optimizer=self.optimizer,
+                                    scaler=None,
+                                    tokenizer=self.mm.tokenizer,
+                                    epoch=epoch,
+                                    max_to_keep=self.cfg.logging.save_total_limit,
+                                    prefer_safetensors=self.cfg.logging.prefer_safetensors
+                                    )
             
             if self.cfg.logging.save_model:
                 save_dir = os.path.join(run_dir, "export")
