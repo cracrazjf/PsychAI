@@ -560,7 +560,7 @@ class TrainingManager:
                 if self.cfg.logging.eval_strategy == "epoch":
                     if (epoch+1) % self.cfg.logging.eval_interval == 0:
                         if val_dataloader is not None:
-                            eval_info = self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
+                            self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
                     if (epoch + 1) % self.cfg.logging.log_interval == 0:
                         with open(log_path, "a") as f:
                             f.write(json.dumps(train_info) + "\n")

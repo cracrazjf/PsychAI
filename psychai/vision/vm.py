@@ -9,7 +9,7 @@ from timm.data import resolve_model_data_config
 from torch.utils.data import DataLoader
 from typing import Any, Optional
 from ..nn_builder import ClassificationModelWrapper, Model, build_spec_from_config, from_pretrained, load_config
-from ..language.utils import to_serializable
+from ..language.utils import to_serializable, save_checkpoint
 
 class ModelManager:
     def __init__(self):
@@ -78,8 +78,7 @@ class ModelManager:
 
 class TrainingManager:
     def __init__(self, 
-                 cfg,
-                 eval_fn=None):
+                 cfg):
          self.cfg = cfg
          self.mm = ModelManager()
 
@@ -100,7 +99,7 @@ class TrainingManager:
         else:
             raise ValueError(f"Unsupported optimizer: {self.cfg.optim.optimizer}")
 
-    def train_epoch(self, train_loader: DataLoader, val_loader: DataLoader):
+    def train_epoch(self, epoch: int, train_loader: DataLoader, val_loader: DataLoader):
         device = next(self.mm.model.parameters()).device
         self.mm.model.train()
 
@@ -120,6 +119,16 @@ class TrainingManager:
             if self.cfg.optim.grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(self.mm.model.parameters(), self.cfg.optim.grad_clip)
             self.optimizer.step()
+
+            if self.cfg.logging.log_strategy == "step":
+                if (step + 1) % self.cfg.logging.log_interval == 0:
+                    train_info = {"epoch": epoch_loss / (step + 1), "step": step + 1}
+                    with open(self.log_path, "a") as f:
+                        f.write(json.dumps(train_info) + "\n")
+
+                if (step + 1) % self.cfg.logging.eval_interval == 0:
+                    self.evaluate(val_loader, self.eval_fn, epoch, step=step + 1, eval_path=self.eval_path)
+
         return {"epoch_loss": epoch_loss / len(train_loader)}
 
     def evaluate(self, 
@@ -190,6 +199,7 @@ class TrainingManager:
             raise ValueError("eval_fn must return a dict or list of dicts")
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader, eval_fn: Optional[Any] = None):
+        self.eval_fn = eval_fn
         for run in range(self.cfg.num_runs):
             seed = self.cfg.seed + run
             torch.manual_seed(seed)
@@ -197,14 +207,14 @@ class TrainingManager:
                 torch.cuda.manual_seed(seed)
             random.seed(seed)
             np.random.seed(seed)
-            run_dir = None
-            log_path = None
+            self.run_dir = None
+            self.log_path = None
             if self.cfg.exp_dir is not None:
-                run_dir = os.path.join(self.cfg.exp_dir, f"run_{run+1}")
-                os.makedirs(run_dir, exist_ok=True)
-                log_path = os.path.join(run_dir, "log.jsonl")
-                eval_path = os.path.join(run_dir, "eval_results.json")
-                with open(log_path, "w") as f:
+                self.run_dir = os.path.join(self.cfg.exp_dir, f"run_{run+1}")
+                os.makedirs(self.run_dir, exist_ok=True)
+                self.log_path = os.path.join(self.run_dir, "log.jsonl")
+                eval_path = os.path.join(self.run_dir, "eval_results.json")
+                with open(self.log_path, "w") as f:
                     f.write("")
                 with open(eval_path, "w") as f:
                     f.write("")
@@ -221,10 +231,26 @@ class TrainingManager:
         self.configure_optimizer()
 
         for epoch in range(self.cfg.num_epochs):
-            train_info = self.train_epoch(train_loader, val_loader)
-            if (epoch + 1) % self.cfg.logging.log_interval == 0:
-                with open(log_path, "a") as f:
-                    f.write(json.dumps(train_info) + "\n")
+            train_info = self.train_epoch(epoch, train_loader, val_loader)
+
+            if self.cfg.logging.eval_strategy == "epoch":
+                if (epoch + 1) % self.cfg.logging.log_interval == 0:
+                    with open(self.log_path, "a") as f:
+                        f.write(json.dumps(train_info) + "\n")
+
+                if (epoch + 1) % self.cfg.logging.eval_interval == 0:
+                    self.evaluate(val_loader, self.eval_fn, epoch, step=0, eval_path=self.eval_path)
+
+            if (epoch + 1) % self.cfg.logging.save_interval == 0:
+                    save_checkpoint(self.run_dir, 
+                                    self.mm.model, 
+                                    optimizer=self.optimizer,
+                                    scaler=None,
+                                    tokenizer=self.mm.tokenizer,
+                                    epoch=epoch,
+                                    max_to_keep=self.cfg.logging.save_total_limit,
+                                    prefer_safetensors=self.cfg.logging.prefer_safetensors
+                                    )
 
 
 
