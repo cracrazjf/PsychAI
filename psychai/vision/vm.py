@@ -213,10 +213,10 @@ class TrainingManager:
                 self.run_dir = os.path.join(self.cfg.exp_dir, f"run_{run+1}")
                 os.makedirs(self.run_dir, exist_ok=True)
                 self.log_path = os.path.join(self.run_dir, "log.jsonl")
-                eval_path = os.path.join(self.run_dir, "eval_results.json")
+                self.eval_path = os.path.join(self.run_dir, "eval_results.json")
                 with open(self.log_path, "w") as f:
                     f.write("")
-                with open(eval_path, "w") as f:
+                with open(self.eval_path, "w") as f:
                     f.write("")
         
         self.mm.load_model(
