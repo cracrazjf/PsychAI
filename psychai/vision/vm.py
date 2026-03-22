@@ -166,7 +166,8 @@ class TrainingManager:
                     feats = self.mm.model(inputs)
 
             eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / len(dataloader)}
-            
+                
+        eval_result = None        
         if self.cfg.model.wrapper == "classification":
             if eval_fn is not None:
                 eval_result = eval_fn(self.mm, 
@@ -179,7 +180,11 @@ class TrainingManager:
                                     embedding_list, 
                                     weights)
                 
-        if isinstance(eval_result, dict):
+        if eval_result is None:
+            if eval_path is not None:
+                with open(eval_path, "a") as f:
+                    f.write(json.dumps(eval_info) + "\n")
+        elif isinstance(eval_result, dict):
             for key, value in eval_result.items():
                 if isinstance(value, dict):
                     for k, v in value.items():
