@@ -8,8 +8,8 @@ import os
 from timm.data import resolve_model_data_config
 from torch.utils.data import DataLoader
 from typing import Any, Optional
-from ..nn_builder import ClassificationModelWrapper, Model, build_spec_from_config, from_pretrained, load_config
-from ..language.utils import to_serializable, save_checkpoint
+from ..nn_builder import ClassificationModelWrapper, Model, build_spec_from_config, from_pretrained, load_config, save_pretrained
+from ..language.utils import to_serializable, save_checkpoint, clean_dir
 
 class ModelManager:
     def __init__(self):
@@ -224,38 +224,43 @@ class TrainingManager:
                 with open(self.eval_path, "w") as f:
                     f.write("")
         
-        self.mm.load_model(
-            model_name=self.cfg.model.name,
-            model_path=self.cfg.model.path,
-            model_type=self.cfg.model.model_type,
-            wrapper=self.cfg.model.wrapper,
-            device=self.cfg.device,
-            task=self.cfg.task
-        )
+            self.mm.load_model(
+                model_name=self.cfg.model.name,
+                model_path=self.cfg.model.path,
+                model_type=self.cfg.model.model_type,
+                wrapper=self.cfg.model.wrapper,
+                device=self.cfg.device,
+                task=self.cfg.task
+            )
 
-        self.configure_optimizer()
+            self.configure_optimizer()
 
-        for epoch in range(self.cfg.num_epochs):
-            train_info = self.train_epoch(epoch, train_loader, val_loader)
+            for epoch in range(self.cfg.num_epochs):
+                train_info = self.train_epoch(epoch, train_loader, val_loader)
 
-            if self.cfg.logging.eval_strategy == "epoch":
-                if (epoch + 1) % self.cfg.logging.log_interval == 0:
-                    with open(self.log_path, "a") as f:
-                        f.write(json.dumps(train_info) + "\n")
+                if self.cfg.logging.eval_strategy == "epoch":
+                    if (epoch + 1) % self.cfg.logging.log_interval == 0:
+                        with open(self.log_path, "a") as f:
+                            f.write(json.dumps(train_info) + "\n")
 
-                if (epoch + 1) % self.cfg.logging.eval_interval == 0:
-                    self.evaluate(val_loader, self.eval_fn, epoch, step=0, eval_path=self.eval_path)
+                    if (epoch + 1) % self.cfg.logging.eval_interval == 0:
+                        self.evaluate(val_loader, self.eval_fn, epoch, step=0, eval_path=self.eval_path)
 
-            if (epoch + 1) % self.cfg.logging.save_interval == 0:
-                    save_checkpoint(self.run_dir, 
-                                    self.mm.model, 
-                                    optimizer=self.optimizer,
-                                    scaler=None,
-                                    tokenizer=self.mm.tokenizer,
-                                    epoch=epoch,
-                                    max_to_keep=self.cfg.logging.save_total_limit,
-                                    prefer_safetensors=self.cfg.logging.prefer_safetensors
-                                    )
+                if (epoch + 1) % self.cfg.logging.save_interval == 0:
+                        save_checkpoint(self.run_dir, 
+                                        self.mm.model, 
+                                        optimizer=self.optimizer,
+                                        scaler=None,
+                                        epoch=epoch,
+                                        max_to_keep=self.cfg.logging.save_total_limit,
+                                        prefer_safetensors=self.cfg.logging.prefer_safetensors
+                                        )
+
+            if self.cfg.logging.save_model:
+                    save_dir = os.path.join(self.run_dir, "export")
+                    clean_dir(save_dir)
+                    save_pretrained(self.mm.model, save_dir, prefer_safetensors=self.cfg.logging.prefer_safetensors)
+                    print(f"model saved!")
 
 
 
