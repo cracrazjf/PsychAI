@@ -148,6 +148,7 @@ class TrainingManager:
 
         eval_loss = 0.0
         accuracy = 0.0
+        total = 0
 
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
@@ -162,10 +163,11 @@ class TrainingManager:
                     eval_loss += outputs["loss"].item()
                     preds = outputs["logits"].argmax(dim=-1)
                     accuracy += (preds == labels).sum().item()
+                    total += labels.size(0)
                 else:
                     feats = self.mm.model(inputs)
 
-            eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / len(dataloader)}
+            eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / total}
                 
         eval_result = None        
         if self.cfg.model.wrapper == "classification":
