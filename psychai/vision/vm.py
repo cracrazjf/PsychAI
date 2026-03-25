@@ -46,8 +46,8 @@ class ModelManager:
                 print(f"Model not found, rebuilding model from config")
 
                 config = load_config(self.model_path)
-            model = build_spec_from_config(config)  
-            self.model = Model(model)
+                model = build_spec_from_config(config)  
+                self.model = Model(model)
             print(self.model.summary())
             if ctor is not None:
                 self.model = ctor(self.model)
@@ -98,6 +98,14 @@ class TrainingManager:
                             weight_decay=self.cfg.optim.weight_decay)
         else:
             raise ValueError(f"Unsupported optimizer: {self.cfg.optim.optimizer}")
+        
+        if self.cfg.optim.lr_scheduler == "multistep":
+            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer,
+                    milestones=self.cfg.optim.lr_steps,
+                    gamma=self.cfg.optim.gamma,
+                )
+        else:
+            self.scheduler = None
 
     def train_epoch(self, epoch: int, train_loader: DataLoader, val_loader: DataLoader):
         device = next(self.mm.model.parameters()).device
@@ -129,19 +137,20 @@ class TrainingManager:
                 if (step + 1) % self.cfg.logging.eval_interval == 0:
                     self.evaluate(val_loader, self.eval_fn, epoch, step=step + 1, eval_path=self.eval_path)
 
+        if self.scheduler is not None:
+            self.scheduler.step()
         return {"epoch_loss": epoch_loss / len(train_loader)}
 
     def evaluate(self, 
                  dataloader: DataLoader, 
-                 eval_fn: Optional[Any], 
-                 epoch: Optional[int], 
-                 step: Optional[int] = 0, 
-                 eval_path: Optional[str] = None):
+                 eval_fn: Optional[Any]=None, 
+                 epoch: Optional[int]=0, 
+                 step: Optional[int]=0, 
+                 eval_path: Optional[str]=None):
         
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
 
-        embedding_list = None
         weights = None
         if self.cfg.logging.return_weights:
             weights = self.mm.model.get_weights()
@@ -159,51 +168,34 @@ class TrainingManager:
                     labels = batch['labels'].long().to(device)
 
                 if self.cfg.model.wrapper == "classification":
-                    outputs = self.mm.model(inputs, labels=labels)
+                    outputs = self.mm.model(inputs, labels=labels, return_embeds=self.cfg.logging.return_embeddings)
                     eval_loss += outputs["loss"].item()
                     preds = outputs["logits"].argmax(dim=-1)
                     accuracy += (preds == labels).sum().item()
                     total += labels.size(0)
+                    if self.cfg.logging.return_embeddings:
+                        embeds = outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type]
+                    else:
+                        embeds = outputs["embeds"]
                 else:
-                    feats = self.mm.model(inputs)
+                    embeds = self.mm.model(inputs)
+                    
+                if eval_fn is not None:
+                    eval_fn(self.mm, 
+                            self.cfg, 
+                            idxs,
+                            outputs["inputs"], 
+                            outputs["labels"] if "labels" in outputs else None, 
+                            outputs["logits"],
+                            preds,
+                            embeds,
+                            weights)
 
-            eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / total}
-                
-        eval_result = None        
-        if self.cfg.model.wrapper == "classification":
-            if eval_fn is not None:
-                eval_result = eval_fn(self.mm, 
-                                    self.cfg, 
-                                    idxs,
-                                    outputs["input_ids"], 
-                                    outputs["labels"] if "labels" in outputs else None, 
-                                    outputs["logits"],
-                                    preds,
-                                    embedding_list, 
-                                    weights)
-                
-        if eval_result is None:
-            if eval_path is not None:
-                with open(eval_path, "a") as f:
-                    f.write(json.dumps(eval_info) + "\n")
-        elif isinstance(eval_result, dict):
-            for key, value in eval_result.items():
-                if isinstance(value, dict):
-                    for k, v in value.items():
-                        value[k] = to_serializable(v)
-                eval_info[key] = to_serializable(value)
-            if eval_path is not None:
-                with open(eval_path, "a") as f:
-                    f.write(json.dumps(eval_info) + "\n")
-            else:
-                raise ValueError("eval_path must be provided when eval_fn is used")
-        elif isinstance(eval_result, list):
-            for rec in eval_result:
-                if eval_path is not None:
-                    with open(eval_path, "a") as f:
-                        f.write(json.dumps(rec) + "\n")
-        else:   
-            raise ValueError("eval_fn must return a dict or list of dicts")
+        eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / total}   
+        if eval_path is not None:
+            os.makedirs(os.path.dirname(eval_path), exist_ok=True)        
+            with open(eval_path, "w") as f:
+                f.write(json.dumps(eval_info) + "\n")
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader, eval_fn: Optional[Any] = None):
         self.eval_fn = eval_fn

@@ -268,19 +268,9 @@ class ClassificationModelWrapper(nn.Module):
         else:
             output = self.base_model(x)
 
-        # Handle several possible output formats
-        if isinstance(output, tuple):
-            if len(output) == 2:
-                logits, embeds = output
-            else:
-                logits = output[0]
-                embeds = output[-1]
-        elif isinstance(output, dict):
-            logits = output["logits"]
-            embeds = output.get("embeds", None)
-        else:
-            logits = output
-
+        out, next_state, embeds = output
+        logits = out["logits"]
+        
         # Compute loss
         if labels is not None:
             if labels.dtype != torch.long:

@@ -524,7 +524,7 @@ class CNN(Layer):
     @property
     def provides(self): return ("logits",)
 
-    def forward(self, inputs: Dict[str, Any], return_features: bool = False) -> Dict[str, Any]:
+    def forward(self, inputs: Dict[str, Any], return_features: bool = True) -> Dict[str, Any]:
         x = inputs.get("pixel_values")
         # Conv block 1
         x = F.relu(self.conv1(x))
@@ -539,10 +539,145 @@ class CNN(Layer):
 
         # Feature representation (for kNN / Mahalanobis)
         features = F.relu(self.fc1(x))
-        features = self.dropout(features)
+        # features = self.dropout(features)
+        # keep_prob = 1.0 - 0.3
+        # mask = (torch.rand_like(features) < keep_prob).float()
+        # features = features * mask
 
         logits = self.fc2(features)
 
         if return_features:
-            return logits, features
-        return logits
+            return {"logits": logits, "features": features}
+        return {"logits": logits}
+
+@register_layer("resnet18")
+class ResNet18(Layer):
+    class BasicBlock(nn.Module):
+        expansion = 1
+
+        def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
+            super().__init__()
+
+            self.conv1 = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                stride=stride,
+                padding=1,
+                bias=False,
+            )
+            self.bn1 = nn.BatchNorm2d(out_channels)
+
+            self.conv2 = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            self.bn2 = nn.BatchNorm2d(out_channels)
+
+            self.shortcut = nn.Sequential()
+            if stride != 1 or in_channels != out_channels:
+                self.shortcut = nn.Sequential(
+                    nn.Conv2d(
+                        in_channels,
+                        out_channels,
+                        kernel_size=1,
+                        stride=stride,
+                        bias=False,
+                    ),
+                    nn.BatchNorm2d(out_channels),
+                )
+
+        def forward(self, x):
+            identity = self.shortcut(x)
+
+            out = self.conv1(x)
+            out = self.bn1(out)
+            out = F.relu(out, inplace=True)
+
+            out = self.conv2(out)
+            out = self.bn2(out)
+
+            out = out + identity
+            out = F.relu(out, inplace=True)
+            return out
+
+    def __init__(
+        self,
+        num_classes: int,
+        in_channels: int = 3,
+        base_channels: int = 64,
+        embed_size: int = 128,
+        dropout_p: float = 0.0,
+    ):
+        super().__init__()
+
+        # CIFAR stem: keep 32x32 resolution at the beginning
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            base_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=False,
+        )
+        self.bn1 = nn.BatchNorm2d(base_channels)
+
+        # ResNet-18 layout: [2,2,2,2]
+        self.layer1 = self._make_layer(base_channels, base_channels, num_blocks=2, stride=1)
+        self.layer2 = self._make_layer(base_channels, base_channels * 2, num_blocks=2, stride=2)
+        self.layer3 = self._make_layer(base_channels * 2, base_channels * 4, num_blocks=2, stride=2)
+        self.layer4 = self._make_layer(base_channels * 4, base_channels * 8, num_blocks=2, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # embedding for confidence analysis / kNN / Mahalanobis
+        self.fc1 = nn.Linear(base_channels * 8, embed_size)
+        self.fc2 = nn.Linear(embed_size, num_classes)
+
+        self.dropout = nn.Dropout(dropout_p)
+
+    def _make_layer(self, in_channels: int, out_channels: int, num_blocks: int, stride: int):
+        layers = []
+        layers.append(self.BasicBlock(in_channels, out_channels, stride=stride))
+        for _ in range(1, num_blocks):
+            layers.append(self.BasicBlock(out_channels, out_channels, stride=1))
+        return nn.Sequential(*layers)
+
+    @property
+    def requires(self):
+        return ("pixel_values",)
+
+    @property
+    def provides(self):
+        return ("logits",)
+
+    def forward(self, inputs: Dict[str, Any], return_features: bool = True) -> Dict[str, Any]:
+        x = inputs.get("pixel_values")
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = F.relu(x, inplace=True)
+
+        x = self.layer1(x)   # 32x32
+        x = self.layer2(x)   # 16x16
+        x = self.layer3(x)   # 8x8
+        x = self.layer4(x)   # 4x4
+
+        x = self.avgpool(x)  # (B, C, 1, 1)
+        x = torch.flatten(x, 1)
+
+        features = self.fc1(x)
+        features = F.relu(features, inplace=True)
+
+        if self.dropout.p > 0:
+            features = self.dropout(features)
+
+        logits = self.fc2(features)
+
+        if return_features:
+            return {"logits": logits, "features": features}
+        return {"logits": logits}
