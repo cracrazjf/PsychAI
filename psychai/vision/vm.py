@@ -194,7 +194,7 @@ class TrainingManager:
         eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader), "accuracy": accuracy / total}   
         if eval_path is not None:
             os.makedirs(os.path.dirname(eval_path), exist_ok=True)        
-            with open(eval_path, "w") as f:
+            with open(eval_path, "a") as f:
                 f.write(json.dumps(eval_info) + "\n")
 
     def train(self, train_loader: DataLoader, val_loader: DataLoader, eval_fn: Optional[Any] = None):

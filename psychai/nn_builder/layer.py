@@ -540,7 +540,7 @@ class CNN(Layer):
         # Feature representation (for kNN / Mahalanobis)
         features = F.relu(self.fc1(x))
         # features = self.dropout(features)
-        # keep_prob = 1.0 - 0.3
+        # keep_prob = 1.0 - 0.1
         # mask = (torch.rand_like(features) < keep_prob).float()
         # features = features * mask
 
@@ -672,11 +672,15 @@ class ResNet18(Layer):
 
         features = self.fc1(x)
         features = F.relu(features, inplace=True)
+        # keep_prob = 1.0 - 0.3
+        # mask = (torch.rand_like(features) < keep_prob).float()
+        # features = features * mask
 
         if self.dropout.p > 0:
             features = self.dropout(features)
 
         logits = self.fc2(features)
+
 
         if return_features:
             return {"logits": logits, "features": features}
