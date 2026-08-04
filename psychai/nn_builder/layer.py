@@ -7,6 +7,22 @@ import math
 
 LAYER_REGISTRY: Dict[str, Callable[..., nn.Module]] = {}
 
+
+def stochastic_mask(x: torch.Tensor, p: float) -> torch.Tensor:
+    """Zero each unit independently with probability ``p``, in any module mode.
+
+    Distinct from ``nn.Dropout`` in two ways that matter for confidence estimation:
+    it stays active under ``eval()``, and it does not rescale survivors. Activations
+    therefore keep the scale the trained ``fc2`` expects, so agreement between a masked
+    pass and the unperturbed prediction reflects lost units rather than a shifted
+    activation scale.
+    """
+    if not p:
+        return x
+    if not 0.0 <= p < 1.0:
+        raise ValueError(f"mask_p must be in [0, 1), got {p}")
+    return x * (torch.rand_like(x) >= p).to(x.dtype)
+
 def register_layer(name: str):
     def decorator(cls):
         LAYER_REGISTRY[name] = cls
@@ -506,7 +522,7 @@ class LMHead(Layer):
 
 @register_layer("cnn")
 class CNN(Layer):
-    def __init__(self, num_classes: int, in_channels: int = 3, out_channels: int = 64, kernel_size: int = 3, embed_size=128, padding=1, dropout_p=0.3):
+    def __init__(self, num_classes: int, in_channels: int = 3, out_channels: int = 64, kernel_size: int = 3, embed_size=128, padding=1, dropout_p=0.0, mask_p=0.0):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)   # (32x32) -> (32x32)
         self.conv2 = nn.Conv2d(out_channels, out_channels * 2, kernel_size=kernel_size, padding=padding)  # (32x32) -> (32x32)
@@ -516,7 +532,11 @@ class CNN(Layer):
         self.fc1 = nn.Linear(out_channels * 2 * 8 * 8, embed_size)
         self.fc2 = nn.Linear(embed_size, num_classes)
 
+        # Training-time dropout: mode-aware, inverted-scaling, identity under eval().
         self.dropout = nn.Dropout(p=dropout_p)
+        # Test-time stochastic masking: applied in every mode, no rescaling, so that
+        # dropped units stay dropped under eval(). Set at runtime, independent of dropout_p.
+        self.mask_p = mask_p
 
     @property
     def requires(self): return ("pixel_values",)
@@ -539,12 +559,9 @@ class CNN(Layer):
 
         # Feature representation (for kNN / Mahalanobis)
         features = F.relu(self.fc1(x))
-        # features = self.dropout(features)
-        # keep_prob = 1.0 - 0.1
-        # mask = (torch.rand_like(features) < keep_prob).float()
-        # features = features * mask
+        features = self.dropout(features)
 
-        logits = self.fc2(features)
+        logits = self.fc2(stochastic_mask(features, self.mask_p))
 
         if return_features:
             return {"logits": logits, "features": features}
@@ -612,6 +629,7 @@ class ResNet18(Layer):
         base_channels: int = 64,
         embed_size: int = 128,
         dropout_p: float = 0.0,
+        mask_p: float = 0.0,
     ):
         super().__init__()
 
@@ -638,7 +656,9 @@ class ResNet18(Layer):
         self.fc1 = nn.Linear(base_channels * 8, embed_size)
         self.fc2 = nn.Linear(embed_size, num_classes)
 
+        # See CNN above for the dropout_p / mask_p split.
         self.dropout = nn.Dropout(dropout_p)
+        self.mask_p = mask_p
 
     def _make_layer(self, in_channels: int, out_channels: int, num_blocks: int, stride: int):
         layers = []
@@ -672,15 +692,9 @@ class ResNet18(Layer):
 
         features = self.fc1(x)
         features = F.relu(features, inplace=True)
-        # keep_prob = 1.0 - 0.3
-        # mask = (torch.rand_like(features) < keep_prob).float()
-        # features = features * mask
+        features = self.dropout(features)
 
-        if self.dropout.p > 0:
-            features = self.dropout(features)
-
-        logits = self.fc2(features)
-
+        logits = self.fc2(stochastic_mask(features, self.mask_p))
 
         if return_features:
             return {"logits": logits, "features": features}
