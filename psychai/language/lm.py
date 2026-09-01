@@ -119,7 +119,7 @@ class ModelManager:
             self.model_path = self.model_name
 
         print(f"Loading model and tokenizer from {self.model_path}")
-        tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=True)
 
         wrapper_map = {
             "causal_lm": AutoModelForCausalLM,
@@ -340,18 +340,6 @@ class TrainingManager:
             self.optimizer.step()
             epoch_loss += loss.item()
 
-            if self.cfg.logging.eval_strategy == "step":
-                if (i + 1) % self.cfg.logging.eval_interval == 0:
-                    if val_loader is not None:
-                        self.evaluate(dataloader=val_loader, 
-                                        eval_fn=eval_fn, 
-                                        epoch=epoch, 
-                                        step=i + 1, 
-                                        eval_path=eval_path)
-                if (i + 1) % self.cfg.logging.log_interval == 0:
-                    with open(log_path, "a") as f:
-                        f.write(json.dumps({"epoch": epoch + 1, "step": i + 1, "train_loss": epoch_loss / (i + 1)}) + "\n")
-
         return {"epoch": epoch + 1, "train_loss": epoch_loss / len(dataloader)}
                     
     def evaluate(self, 
@@ -359,18 +347,23 @@ class TrainingManager:
                  eval_fn: Optional[Any]=None, 
                  epoch: Optional[int]=0, 
                  step: Optional[int] = 0, 
-                 eval_path: Optional[str] = None):
+                 eval_path: Optional[str] = None,
+                 dataset_eval=False):
         
         device = next(self.mm.model.parameters()).device
         self.mm.model.eval()
+
+        if dataset_eval:
+            all_inputs = []
+            all_labels = []
+            all_logits = []
+            all_preds = []
+            all_embeds = []
         
         if self.cfg.logging.return_weights:
             weights = self.mm.model.base_model.get_weights()
         else:
             weights = None
-        
-        if eval_path is not None:
-            open(eval_path, "w").close()
 
         recurrent_state = {} if self.cfg.bp_method == "continuous" else None
 
@@ -422,19 +415,58 @@ class TrainingManager:
                     embedding_list = _collect_embeddings(outputs["input_ids"], outputs["attention_mask"], 
                     outputs["embeds"][self.cfg.logging.layer_of_interest][self.cfg.logging.embed_type])
                     
-                eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader)}
+                eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "batch_loss": loss.item()}
 
-                if eval_fn is not None:
-                    eval_result = eval_fn(self.mm, 
-                                        self.cfg, 
-                                        idxs,
-                                        outputs["input_ids"], 
-                                        outputs["labels"] if "labels" in outputs else None, 
-                                        logits,
-                                        preds,
-                                        embedding_list, 
-                                        weights)
+                if dataset_eval:
+                    all_inputs.append(outputs["input_ids"])
+                    all_labels.append(outputs["labels"] if "labels" in outputs else None)
+                    all_logits.append(logits)
+                    all_preds.append(preds)
+                    all_embeds.append(embedding_list)
+                else:
+                    if eval_fn is not None:
+                        eval_result = eval_fn(self.mm, 
+                                            self.cfg, 
+                                            idxs,
+                                            outputs["input_ids"], 
+                                            outputs["labels"] if "labels" in outputs else None, 
+                                            logits,
+                                            preds,
+                                            embedding_list, 
+                                            weights)
+                        if isinstance(eval_result, dict):
+                            for key, value in eval_result.items():
+                                if isinstance(value, dict):
+                                    for k, v in value.items():
+                                        value[k] = to_serializable(v)
+                                eval_info[key] = to_serializable(value)
+                            if eval_path is not None:
+                                with open(eval_path, "a") as f:
+                                    f.write(json.dumps(eval_info) + "\n")
+                            else:
+                                raise ValueError("eval_path must be provided when eval_fn is used")
+                        elif isinstance(eval_result, list):
+                            for rec in eval_result:
+                                if eval_path is not None:
+                                    with open(eval_path, "a") as f:
+                                        f.write(json.dumps(rec) + "\n")
+                        else:   
+                            raise ValueError("eval_fn must return a dict or list of dicts")
+                    else:
+                        return outputs["input_ids"], outputs["labels"], logits, preds, embedding_list, weights
+        if dataset_eval:
+            if eval_fn is not None:
+                eval_result = eval_fn(self.mm, 
+                                    self.cfg, 
+                                    None,
+                                    all_inputs,
+                                    all_labels,
+                                    all_logits,
+                                    all_preds,
+                                    all_embeds,
+                                    weights)
                 if isinstance(eval_result, dict):
+                    eval_info = {"epoch": epoch + 1, "step": step, "eval_loss": eval_loss / len(dataloader)}
                     for key, value in eval_result.items():
                         if isinstance(value, dict):
                             for k, v in value.items():
@@ -452,6 +484,8 @@ class TrainingManager:
                                 f.write(json.dumps(rec) + "\n")
                 else:   
                     raise ValueError("eval_fn must return a dict or list of dicts")
+            else:
+                return all_inputs, all_labels, all_logits, all_preds, all_embeds, weights
 
     def generate(self, prompt: str | torch.Tensor, max_new_tokens: int = 50, temperature: float = 1.0, top_k: int = 50, return_logits: bool = False):
         device = next(self.mm.model.parameters()).device
@@ -543,6 +577,16 @@ class TrainingManager:
                                                    shuffle_dataset=False, 
                                                    shuffle_dataloader=False, 
                                                    seed=seed)
+            epoch_checkpoints = {
+                int(round(x))
+                for x in np.logspace(
+                    0,
+                    math.log10(self.cfg.num_epochs - 1),
+                    num=self.cfg.logging.save_total_limit,
+                )
+            }
+            epoch_checkpoints.add(0)
+            epoch_checkpoints.add(self.cfg.num_epochs - 1)
             for epoch in range(self.cfg.num_epochs):
                 if self.cfg.data.shuffle_dataset:
                     train_dataloader = self.prepare_data(train_dataset, 
@@ -558,27 +602,22 @@ class TrainingManager:
                                                 log_path=log_path)
 
                 if self.cfg.logging.eval_strategy == "epoch":
-                    if (epoch+1) % self.cfg.logging.eval_interval == 0:
+                    if epoch in epoch_checkpoints:
                         if val_dataloader is not None:
-                            self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path)
-                    if (epoch + 1) % self.cfg.logging.log_interval == 0:
+                            self.evaluate(val_dataloader, eval_fn, epoch, step=len(val_dataloader), eval_path=eval_path, dataset_eval=self.cfg.logging.dataset_eval)
                         with open(log_path, "a") as f:
                             f.write(json.dumps(train_info) + "\n")
-
-                if (epoch + 1) % self.cfg.logging.save_interval == 0:
-                    save_checkpoint(run_dir, 
-                                    self.mm.model, 
-                                    optimizer=self.optimizer,
-                                    scaler=None,
-                                    tokenizer=self.mm.tokenizer,
-                                    epoch=epoch,
-                                    max_to_keep=self.cfg.logging.save_total_limit,
-                                    prefer_safetensors=self.cfg.logging.prefer_safetensors
-                                    )
+                        save_checkpoint(run_dir, 
+                                        self.mm.model, 
+                                        optimizer=self.optimizer,
+                                        scaler=None,
+                                        epoch=epoch,
+                                        max_to_keep=self.cfg.logging.save_total_limit,
+                                        prefer_safetensors=self.cfg.logging.prefer_safetensors
+                                        )
             
             if self.cfg.logging.save_model:
                 save_dir = os.path.join(run_dir, "export")
                 clean_dir(save_dir)
                 save_pretrained(self.mm.model, save_dir, prefer_safetensors=self.cfg.logging.prefer_safetensors)
-                self.mm.tokenizer.save_pretrained(save_dir)
                 print(f"model saved!")

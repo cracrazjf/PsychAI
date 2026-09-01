@@ -265,11 +265,11 @@ class TrainingManager:
                 eval_info = {"epoch": epoch + 1, "step": step, "batch": i, "eval_loss": eval_loss / len(dataloader)}
 
                 if eval_fn is not None:
-                    eval_result = eval_fn(self.mm, 
-                                        self.cfg, 
+                    eval_result = eval_fn(self.mm,
+                                        self.cfg,
                                         idxs,
-                                        outputs["input_ids"], 
-                                        outputs["labels"] if "labels" in outputs else None, 
+                                        input_ids,
+                                        outputs["labels"] if "labels" in outputs else None,
                                         logits,
                                         preds,
                                         embedding_list, 

@@ -62,6 +62,7 @@ class LoggingConfig:
     log_interval: int = 10
     eval_strategy: str = "epoch"
     eval_interval: int = 10
+    dataset_eval: bool = False
     save_interval: int = 10
     
     return_logits: bool = False
