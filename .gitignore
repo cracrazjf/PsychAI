@@ -66,3 +66,6 @@ weights/
 checkpoints/
 
 
+
+# Editor workspace files
+*.code-workspace
